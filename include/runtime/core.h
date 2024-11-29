@@ -4,6 +4,33 @@
 #include <objc/runtime.h>
 #include <objc/message.h>
 #include <stdbool.h>
+#include <mach-o/dyld.h>
+
+// Position independent code utilities
+typedef struct {
+    uintptr_t base;
+    uintptr_t slide;
+} pic_context_t;
+
+static inline pic_context_t pic_get_context(void) {
+    pic_context_t ctx = {0};
+    ctx.base = (uintptr_t)_dyld_get_image_header(0);
+    ctx.slide = _dyld_get_image_vmaddr_slide(0);
+    return ctx;
+}
+
+static inline uintptr_t pic_base(void) {
+    pic_context_t ctx = pic_get_context();
+    return ctx.base + ctx.slide;
+}
+
+static inline uintptr_t pic_offset(const void* ptr) {
+    return (uintptr_t)ptr - pic_base();
+}
+
+static inline uintptr_t pic_resolve(uintptr_t offset) {
+    return pic_base() + offset;
+}
 
 typedef id RTKInstance;
 typedef Class RTKClass;

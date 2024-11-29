@@ -8,7 +8,7 @@ struct RTKContext {
     RTKError last_error;
     char error_message[256];
     RTKInstance autorelease_pool;
-};
+} __attribute__((aligned(16)));
 
 void rtk_set_error(RTKContext* ctx, RTKError error, const char* format, ...) {
     if (!ctx) return;

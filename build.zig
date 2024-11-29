@@ -9,6 +9,14 @@ pub fn build(b: *std.Build) !void {
     var targets = std.ArrayList(*std.Build.Step.Compile).init(b.allocator);
     defer targets.deinit();
 
+    // Add obfuscation object
+    const obf = b.addObject(.{
+        .name = "obfuscate",
+        .root_source_file = b.path("src/obf.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+
     // Create library
     const runtime_lib = b.addStaticLibrary(.{
         .name = "runtime",
@@ -18,15 +26,15 @@ pub fn build(b: *std.Build) !void {
 
     try targets.append(runtime_lib);
 
-    // Common C flags for both library and client
     const c_flags = [_][]const u8{
         "-Wall",
         "-Wextra",
         "-pedantic",
         "-I./include",
+        "-fPIC",
+        "-fvisibility=hidden",
     };
 
-    // Add library source files with flags
     runtime_lib.addCSourceFiles(.{
         .files = &.{
             "src/core.c",
@@ -36,10 +44,9 @@ pub fn build(b: *std.Build) !void {
         .flags = &c_flags,
     });
 
-    // Link with Foundation framework for macOS
+    runtime_lib.addObject(obf);
     runtime_lib.linkFramework("Foundation");
 
-    // Create client executable
     const client = b.addExecutable(.{
         .name = "client",
         .target = target,
@@ -48,7 +55,6 @@ pub fn build(b: *std.Build) !void {
 
     try targets.append(client);
 
-    // Add client source files with flags
     client.addCSourceFiles(.{
         .files = &.{
             "src/client.c",
@@ -56,22 +62,15 @@ pub fn build(b: *std.Build) !void {
         .flags = &c_flags,
     });
 
-    // Link with our runtime library
     client.linkLibrary(runtime_lib);
-
-    // Link with Foundation framework for client
     client.linkFramework("Foundation");
-
-    // Install the client binary
     b.installArtifact(client);
 
-    // Add "run" step
     const run_cmd = b.addRunArtifact(client);
     run_cmd.step.dependOn(b.getInstallStep());
 
     const run_step = b.step("run", "Run the client");
     run_step.dependOn(&run_cmd.step);
 
-    // Add compile_commands.json generation step
     zcc.createStep(b, "cdb", try targets.toOwnedSlice());
 }

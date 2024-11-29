@@ -9,5 +9,14 @@ RTKInstance rtk_msg_send_class(RTKContext* ctx, RTKClass cls, const char* select
 RTKInstance rtk_msg_send_class_str(RTKContext* ctx, RTKClass cls, const char* selector_name, const char* arg);
 RTKInstance rtk_msg_send_empty(RTKContext* ctx, RTKInstance target, const char* selector_name);
 bool rtk_msg_send_data(RTKContext* ctx, RTKInstance target, const char* selector_name, RTKInstance data);
+bool rtk_msg_send_stream(RTKContext* ctx, RTKClass cls, const char* selector_name,
+                        RTKInstance host, RTKInstance port,
+                        RTKInstance* inputStream, RTKInstance* outputStream);
 
+bool rtk_msg_send_buf(RTKContext* ctx, RTKInstance target, const char* selector_name,
+                     void* buffer, size_t length);
+RTKInstance rtk_msg_send_buf_length(RTKContext* ctx, RTKInstance target,
+                                   const char* selector_name, void* buffer, size_t length);
+bool rtk_msg_send_data_length(RTKContext* ctx, RTKInstance target,
+                             const char* selector_name, RTKInstance data, size_t length);
 #endif
