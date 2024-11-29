@@ -18,19 +18,21 @@ struct AppState {
     db: SqlitePool,
 }
 
-// Add a new handler specifically for pings
+#[derive(Debug, sqlx::FromRow, serde::Serialize)]
+struct Beacon {
+    id: String,
+    last_seen: String,
+    status: String,
+}
+
 async fn handle_ping(
+    State(state): State<Arc<AppState>>,
     body: Bytes,
 ) -> impl IntoResponse {
-    // Convert bytes to string
     let data = String::from_utf8_lossy(&body);
-
-    // Log the received ping
     tracing::info!("Received ping data: {}", data);
 
-    // Check if it starts with "PING"
     if data.starts_with("PING") {
-        // Extract client ID if present
         let client_id = data
             .split_whitespace()
             .nth(1)
@@ -38,11 +40,49 @@ async fn handle_ping(
 
         tracing::info!("Ping from client: {}", client_id);
 
-        // Return OK response
-        (StatusCode::OK, "OK\n")
+        // Update beacon last_seen time
+        let result = sqlx::query(
+            "INSERT INTO beacons (id, last_seen, status)
+             VALUES (?, datetime('now'), 'active')
+             ON CONFLICT(id) DO UPDATE SET
+             last_seen = datetime('now'),
+             status = 'active'"
+        )
+        .bind(client_id)
+        .execute(&state.db)
+        .await;
+
+        match result {
+            Ok(_) => (StatusCode::OK, "OK\n"),
+            Err(e) => {
+                tracing::error!("Database error: {}", e);
+                (StatusCode::INTERNAL_SERVER_ERROR, "Internal Server Error\n")
+            }
+        }
     } else {
-        // Return bad request for invalid format
         (StatusCode::BAD_REQUEST, "Invalid ping format\n")
+    }
+}
+
+async fn list_beacons(
+    State(state): State<Arc<AppState>>,
+) -> impl IntoResponse {
+    match sqlx::query_as::<_, Beacon>(
+        "SELECT id, datetime(last_seen) as last_seen, status
+         FROM beacons
+         WHERE last_seen > datetime('now', '-5 minutes')
+         ORDER BY last_seen DESC"
+    )
+    .fetch_all(&state.db)
+    .await
+    {
+        Ok(beacons) => {
+            (StatusCode::OK, Json(beacons))
+        }
+        Err(e) => {
+            tracing::error!("Database error: {}", e);
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(vec![]))
+        }
     }
 }
 
@@ -79,6 +119,7 @@ async fn main() -> anyhow::Result<()> {
     // Build our application with routes
     let app = Router::new()
         .route("/", post(handle_ping))
+        .route("/beacons", get(list_beacons))
         .route("/beacon/register", post(register_beacon))
         .route("/beacon/poll/:id", get(poll_beacon))
         .route("/command/new", post(new_command))

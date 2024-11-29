@@ -9,6 +9,13 @@ struct Client {
     server_url: String,
 }
 
+#[derive(serde::Deserialize, Debug)]
+struct Beacon {
+    id: String,
+    last_seen: String,
+    status: String,
+}
+
 impl Client {
     fn new() -> Result<Self> {
         let mut editor = DefaultEditor::new()?;
@@ -31,6 +38,7 @@ impl Client {
     fn print_help(&self) {
         println!("\n{}", "Available Commands:".green().bold());
         println!("  {} - Send ping to server", "ping".cyan());
+        println!("  {} - List active beacons", "beacons".cyan());
         println!("  {} - Show this help message", "help".cyan());
         println!("  {} - Clear the screen", "clear".cyan());
         println!("  {} - Exit the client", "exit".cyan());
@@ -41,15 +49,30 @@ impl Client {
         match command.trim() {
             "exit" | "quit" => {
                 println!("{}", "Goodbye!".green());
-                return false;
+                false
             }
-            "help" => self.print_help(),
-            "clear" => print!("\x1B[2J\x1B[1;1H"), // Clear screen
-            "ping" => self.send_ping(),
-            "" => (),
-            cmd => println!("{} {}", "Unknown command:".red(), cmd),
+            "help" => {
+                self.print_help();
+                true
+            }
+            "clear" => {
+                print!("\x1B[2J\x1B[1;1H");
+                true
+            }
+            "ping" => {
+                self.send_ping();
+                true
+            }
+            "beacons" => {
+                self.list_beacons();
+                true
+            }
+            "" => true,
+            cmd => {
+                println!("{} {}", "Unknown command:".red(), cmd);
+                true
+            }
         }
-        true
     }
 
     fn send_ping(&self) {
@@ -111,6 +134,39 @@ impl Client {
         }
 
         Ok(())
+    }
+
+    fn list_beacons(&self) {
+        match reqwest::blocking::get(format!("{}/beacons", self.server_url)) {
+            Ok(response) => {
+                if response.status().is_success() {
+                    match response.json::<Vec<Beacon>>() {
+                        Ok(beacons) => {
+                            println!("\n{}", "Active Beacons:".green().bold());
+                            println!("{:-<50}", "");
+                            for beacon in beacons {
+                                println!(
+                                    "{}: {} ({})",
+                                    beacon.id.cyan(),
+                                    beacon.last_seen.yellow(),
+                                    beacon.status.green()
+                                );
+                            }
+                            println!("{:-<50}\n", "");
+                        }
+                        Err(e) => println!("{} {}", "Failed to parse beacons:".red(), e),
+                    }
+                } else {
+                    println!(
+                        "{} {} ({})",
+                        "Server error:".red(),
+                        response.status(),
+                        response.status().as_str()
+                    );
+                }
+            }
+            Err(e) => println!("{} {}", "Failed to fetch beacons:".red(), e),
+        }
     }
 }
 
