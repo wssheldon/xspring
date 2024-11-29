@@ -58,10 +58,13 @@ RTKClass rtk_get_class(RTKContext* ctx, const char* class_name) {
         return NULL;
     }
 
+    fprintf(stderr, "[DEBUG] Looking up class: %s\n", class_name);
     RTKClass cls = objc_getClass(class_name);
     if (!cls) {
         rtk_set_error(ctx, RTK_ERROR_CLASS_NOT_FOUND, "Class not found: %s", class_name);
-        return NULL;
+        fprintf(stderr, "[DEBUG] Class lookup failed: %s\n", class_name);
+    } else {
+        fprintf(stderr, "[DEBUG] Found class: %s at %p\n", class_name, (void*)cls);
     }
 
     return cls;

@@ -81,3 +81,14 @@ bool rtk_data_get_bytes(RTKContext* ctx, RTKInstance data, void* buffer, size_t 
 
     return true;
 }
+
+bool rtk_string_get_utf8(RTKContext* ctx, RTKInstance str, char* buffer, size_t buflen) {
+    if (!ctx || !str || !buffer || buflen == 0) return false;
+
+    const char* utf8 = ((const char* (*)(id, SEL))objc_msgSend)(str, sel_registerName("UTF8String"));
+    if (!utf8) return false;
+
+    strncpy(buffer, utf8, buflen - 1);
+    buffer[buflen - 1] = '\0';
+    return true;
+}

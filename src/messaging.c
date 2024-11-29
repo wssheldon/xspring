@@ -218,3 +218,87 @@ RTKInstance rtk_msg_send_buf_length(RTKContext* ctx, RTKInstance target,
 
     return ((id (*)(id, SEL, void*, NSUInteger))objc_msgSend)(target, selector, buffer, length);
 }
+
+RTKInstance rtk_msg_send_class_int(RTKContext* ctx, RTKClass cls,
+    const char* selector_name, int value) {
+    if (!ctx || !cls || !selector_name) {
+        if (ctx) {
+            rtk_set_error(ctx, RTK_ERROR_INVALID_ARGUMENT,
+                "Invalid arguments to rtk_msg_send_class_int");
+        }
+        return NULL;
+    }
+
+    SEL selector = sel_registerName(selector_name);
+    if (!selector) {
+        rtk_set_error(ctx, RTK_ERROR_SELECTOR_NOT_FOUND,
+            "Selector not found: %s", selector_name);
+        return NULL;
+    }
+
+    return ((id (*)(id, SEL, int))objc_msgSend)((id)cls, selector, value);
+}
+RTKInstance rtk_msg_send_2obj(RTKContext* ctx, RTKInstance target,
+    const char* selector_name, RTKInstance arg1, RTKInstance arg2) {
+    if (!ctx || !target || !selector_name) {
+        if (ctx) {
+            rtk_set_error(ctx, RTK_ERROR_INVALID_ARGUMENT,
+                "Invalid arguments to rtk_msg_send_2obj");
+        }
+        return NULL;
+    }
+
+    SEL selector = sel_registerName(selector_name);
+    if (!selector) {
+        rtk_set_error(ctx, RTK_ERROR_SELECTOR_NOT_FOUND,
+            "Selector not found: %s", selector_name);
+        return NULL;
+    }
+
+    return ((id (*)(id, SEL, id, id))objc_msgSend)(target, selector, arg1, arg2);
+}
+
+bool rtk_msg_send_stream_create(RTKContext* ctx, RTKClass cls,
+    const char* selector_name, RTKInstance host, RTKInstance port,
+    RTKInstance* input, RTKInstance* output) {
+    if (!ctx || !cls || !selector_name || !host || !port || !input || !output) {
+        if (ctx) {
+            rtk_set_error(ctx, RTK_ERROR_INVALID_ARGUMENT,
+                "Invalid arguments to rtk_msg_send_stream_create");
+        }
+        return false;
+    }
+
+    SEL selector = sel_registerName(selector_name);
+    if (!selector) {
+        rtk_set_error(ctx, RTK_ERROR_SELECTOR_NOT_FOUND,
+            "Selector not found: %s", selector_name);
+        return false;
+    }
+
+    ((void (*)(id, SEL, id, id, id*, id*))objc_msgSend)(
+        (id)cls, selector, host, port, input, output);
+
+    return (*input != NULL && *output != NULL);
+}
+
+RTKInstance rtk_msg_send_obj_int(RTKContext* ctx, RTKInstance target,
+    const char* selector_name, RTKInstance arg, size_t intarg) {
+    if (!ctx || !target || !selector_name) {
+        if (ctx) {
+            rtk_set_error(ctx, RTK_ERROR_INVALID_ARGUMENT,
+                "Invalid arguments to rtk_msg_send_obj_int");
+        }
+        return NULL;
+    }
+
+    SEL selector = sel_registerName(selector_name);
+    if (!selector) {
+        rtk_set_error(ctx, RTK_ERROR_SELECTOR_NOT_FOUND,
+            "Selector not found: %s", selector_name);
+        return NULL;
+    }
+
+    return ((id (*)(id, SEL, id, NSUInteger))objc_msgSend)(
+        target, selector, arg, intarg);
+}

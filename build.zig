@@ -33,6 +33,7 @@ pub fn build(b: *std.Build) !void {
         "-I./include",
         "-fPIC",
         "-fvisibility=hidden",
+        "-DDEBUG=1",
     };
 
     runtime_lib.addCSourceFiles(.{
