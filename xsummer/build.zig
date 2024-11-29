@@ -30,11 +30,14 @@ pub fn build(b: *std.Build) !void {
         "-Wall",
         "-Wextra",
         "-pedantic",
-        "-I./include",
         "-fPIC",
         "-fvisibility=hidden",
         "-DDEBUG=1",
     };
+
+    // Add include paths
+    runtime_lib.addIncludePath(b.path("include"));
+    runtime_lib.addIncludePath(b.path("include/runtime"));
 
     runtime_lib.addCSourceFiles(.{
         .files = &.{
@@ -55,6 +58,10 @@ pub fn build(b: *std.Build) !void {
     });
 
     try targets.append(client);
+
+    // Add include paths for client
+    client.addIncludePath(b.path("include"));
+    client.addIncludePath(b.path("include/runtime"));
 
     client.addCSourceFiles(.{
         .files = &.{

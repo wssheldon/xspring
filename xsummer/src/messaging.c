@@ -1,6 +1,6 @@
-#include "runtime/messaging.h"
-#include "runtime/foundation.h"
-#include "runtime/core.h"
+#include <runtime/messaging.h>
+#include <runtime/foundation.h>
+#include <runtime/core.h>
 #include <string.h>
 
 RTKInstance rtk_msg_send_str(RTKContext* ctx, RTKInstance target, const char* selector_name, const char* arg) {

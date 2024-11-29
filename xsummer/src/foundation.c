@@ -1,5 +1,5 @@
-#include "runtime/foundation.h"
-#include "runtime/core.h"
+#include <runtime/foundation.h>
+#include <runtime/core.h>
 #include <string.h>
 
 RTKInstance rtk_string_create(RTKContext* ctx, const char* str) {

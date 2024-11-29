@@ -271,6 +271,57 @@ fn get_encrypted_string(out_len: *usize) callconv(.C) [*]const u8 {
     return &encrypted_data;
 }
 
+// Jenkins One-at-a-Time hash matching the C implementation
+fn hashFnName(comptime name: []const u8) u32 {
+    comptime {
+        var hash: u32 = 0;
+        for (name) |c| {
+            hash +%= c;
+            hash +%= hash << 10;
+            hash ^= hash >> 6;
+        }
+        hash +%= hash << 3;
+        hash ^= hash >> 11;
+        hash +%= hash << 15;
+        return hash;
+    }
+}
+
+// Pre-computed hashes at compile time
+const LibHash = hashFnName("LIBOBJC.A.DYLIB");
+
+const SymbolHashes = struct {
+    const objc_msgSend = hashFnName("_objc_msgSend");
+    const objc_getClass = hashFnName("_objc_getClass");
+    const sel_registerName = hashFnName("_sel_registerName");
+};
+
+// Export functions to C
+export fn getLibHash() u32 {
+    return LibHash;
+}
+
+export fn getObjcMsgSendHash() u32 {
+    return SymbolHashes.objc_msgSend;
+}
+
+export fn getObjcGetClassHash() u32 {
+    return SymbolHashes.objc_getClass;
+}
+
+export fn getSelRegisterNameHash() u32 {
+    return SymbolHashes.sel_registerName;
+}
+
+// Debug function to print all hashes
+export fn printHashes() void {
+    std.debug.print("=== Compile-time hashes ===\n", .{});
+    std.debug.print("Library hash: 0x{X}\n", .{LibHash});
+    std.debug.print("objc_msgSend hash: 0x{X}\n", .{SymbolHashes.objc_msgSend});
+    std.debug.print("objc_getClass hash: 0x{X}\n", .{SymbolHashes.objc_getClass});
+    std.debug.print("sel_registerName hash: 0x{X}\n", .{SymbolHashes.sel_registerName});
+}
+
 comptime {
     @export(obfuscate_string, .{ .name = "obfuscate_string", .linkage = .strong });
     @export(get_encrypted_string, .{ .name = "get_encrypted_string", .linkage = .strong });

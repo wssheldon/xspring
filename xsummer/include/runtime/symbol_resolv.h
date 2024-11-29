@@ -2,12 +2,18 @@
 #include <string.h>
 #include <ctype.h>
 #include <dlfcn.h>
+#include <libgen.h>
+#include <stdlib.h>
+#include <stdbool.h>
+#include <limits.h>
 #include <mach-o/dyld.h>
 #include <mach-o/loader.h>
+#include <mach/mach.h>
+#include <mach/task.h>
+#include <mach-o/dyld_images.h>
 #include <mach-o/nlist.h>
 #include <objc/message.h>
 #include <objc/runtime.h>
-#include <libgen.h>
 
 #define MAX_PATH 1024
 typedef void* FARPROC;
@@ -84,39 +90,52 @@ FARPROC GetSymbolAddressH(void* handle, unsigned int symbolNameHash) {
     return NULL;
 }
 
-/**
- * Locates a loaded library by its name hash.
- * Uses dyld APIs to enumerate loaded images and match against hashed name.
- *
- * Names are converted to uppercase for consistent matching regardless of case.
- * Uses basename to match library name without path components.
- */
+typedef struct dyld_cache* dyld_cache_t;
+
+static struct {
+    const struct dyld_all_image_infos* infos;
+    bool initialized;
+} dyld_cache = {0};
+
+static bool init_dyld_cache(void) {
+    if (dyld_cache.initialized) return true;
+
+    struct task_dyld_info info = {0};
+    mach_msg_type_number_t count = TASK_DYLD_INFO_COUNT;
+
+    if (task_info(mach_task_self(), TASK_DYLD_INFO, (task_info_t)&info, &count) == KERN_SUCCESS) {
+        dyld_cache.infos = (const struct dyld_all_image_infos*)info.all_image_info_addr;
+        dyld_cache.initialized = true;
+        return true;
+    }
+    return false;
+}
+
 void* GetLibraryHandleH(unsigned int libraryNameHash) {
-    uint32_t count = _dyld_image_count();
+    if (!init_dyld_cache() || !dyld_cache.infos) return NULL;
 
-    for (uint32_t i = 0; i < count; i++) {
-        const char* fullPath = _dyld_get_image_name(i);
-        if (!fullPath) continue;
+    _Alignas(16) char name_buf[PATH_MAX];
+    const struct dyld_image_info* curr_info = dyld_cache.infos->infoArray;
+    const uint32_t count = dyld_cache.infos->infoArrayCount;
 
-        // Extract filename from path
-        char* path = strdup(fullPath);
-        char* name = basename(path);
+    for (uint32_t i = 0; i < count; i++, curr_info++) {
+        if (!curr_info || !curr_info->imageFilePath) continue;
 
-        // Convert to uppercase for case-insensitive comparison
-        char upperName[MAX_PATH];
-        size_t j = 0;
-        while (name[j] && j < MAX_PATH - 1) {
-            upperName[j] = toupper(name[j]);
-            j++;
+        const char* base = strrchr(curr_info->imageFilePath, '/');
+        if (!base++) continue;
+
+        size_t len = strlen(base);
+        if (len >= PATH_MAX) continue;
+
+        for (size_t j = 0; j < len; j++) {
+            name_buf[j] = (base[j] >= 'a' && base[j] <= 'z') ?
+                          base[j] - 32 : base[j];
         }
-        upperName[j] = '\0';
+        name_buf[len] = '\0';
 
-        unsigned int currentHash = HASHA(upperName);
-        if (currentHash == libraryNameHash) {
-            free(path);
-            return (void*)_dyld_get_image_header(i);
+        if (HASHA(name_buf) == libraryNameHash) {
+            return (void*)curr_info->imageLoadAddress;
         }
-        free(path);
     }
     return NULL;
 }

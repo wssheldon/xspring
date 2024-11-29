@@ -1,7 +1,10 @@
-#include "runtime/kit.h"
-#include "runtime/obf.h"
-#include "runtime/xspring.h"
-#include "runtime/symbol_resolv.h"
+#include <runtime/kit.h>
+#include <runtime/obf.h>
+#include <runtime/xspring.h>
+#include <runtime/symbol_resolv.h>
+#include <runtime/kit.h>
+#include <runtime/foundation.h>
+#include <runtime/messaging.h>
 #include <CoreFoundation/CoreFoundation.h>
 #include <CFNetwork/CFNetwork.h>
 #include <stdio.h>
@@ -188,22 +191,57 @@ static bool send_ping(RTKContext* ctx) {
     return true;
 }
 
-int main(int argc, char* argv[]) {
-    DEBUG_LOG("Starting client application");
 
-    INSTANCE instance = {0};
 
-    // Get handle to libobjc
-    void* handle = GetLibraryHandleH(HASHA("LIBOBJC.A.DYLIB"));
-    if (!handle) {
-        printf("Failed to get libobjc handle\n");
-        return 1;
+bool InitializeDarwinApi(INSTANCE* instance) {
+    DEBUG_LOG("Starting API initialization");
+
+    // Get libobjc handle
+    void* objc = GetLibraryHandleH(getLibHash());
+    if (!objc) {
+        DEBUG_LOG("Failed to get libobjc handle");
+        return false;
+    }
+    DEBUG_LOG("Library handle obtained successfully: %p", objc);
+
+    // Initialize Objective-C runtime functions
+    instance->Darwin.objc_msgSend = (objc_msgSend_t)GetSymbolAddressH(objc, getObjcMsgSendHash());
+    if (!instance->Darwin.objc_msgSend) {
+        DEBUG_LOG("Failed to resolve objc_msgSend");
+        return false;
     }
 
-    // Resolve objc_msgSend
-    instance.Darwin.objc_msgSend = (objc_msgSend_t)GetSymbolAddressH(handle, HASHA("_objc_msgSend"));
-    if (!instance.Darwin.objc_msgSend) {
-        printf("Failed to resolve objc_msgSend\n");
+    instance->Darwin.objc_getClass = (objc_getClass_t)GetSymbolAddressH(objc, getObjcGetClassHash());
+    if (!instance->Darwin.objc_getClass) {
+        DEBUG_LOG("Failed to resolve objc_getClass");
+        return false;
+    }
+
+    instance->Darwin.sel_registerName = (sel_registerName_t)GetSymbolAddressH(objc, getSelRegisterNameHash());
+    if (!instance->Darwin.sel_registerName) {
+        DEBUG_LOG("Failed to resolve sel_registerName");
+        return false;
+    }
+
+    DEBUG_LOG("Successfully initialized all Objective-C runtime functions");
+
+    // TODO: Initialize other Darwin APIs as needed
+    // For now we'll just focus on the Objective-C runtime functions
+
+    return true;
+}
+
+int main(int argc, char* argv[]) {
+    printf("0x%X\n", HASHA("LIBOBJC.A.DYLIB"));
+
+    DEBUG_LOG("Starting client application");
+
+    // Print hashes for debugging
+    printHashes();
+
+    INSTANCE instance = {0};
+    if (!InitializeDarwinApi(&instance)) {
+        printf("Failed to initialize Darwin API\n");
         return 1;
     }
 

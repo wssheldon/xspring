@@ -49,15 +49,44 @@ typedef struct {
     BUFFER Base;
 
     struct {
-        // libobjc.dylib
+        // Objective-C Runtime
         PTR_OF_TYPE(objc_msgSend);
+        PTR_OF_TYPE(objc_getClass);
+        PTR_OF_TYPE(sel_registerName);
+
+        // File Operations
+        PTR_OF_TYPE(open);
+        PTR_OF_TYPE(read);
+        PTR_OF_TYPE(write);
+        PTR_OF_TYPE(close);
+
+        // Process Operations
+        PTR_OF_TYPE(fork);
+        PTR_OF_TYPE(execve);
+        PTR_OF_TYPE(waitpid);
+
+        // Memory Operations
+        PTR_OF_TYPE(mmap);
+        PTR_OF_TYPE(munmap);
+        PTR_OF_TYPE(mprotect);
 
     } Darwin;
 
 } INSTANCE;
 
+// Function declarations
 unsigned int HashStringJenkinsOneAtATime32BitA(const char* key);
 FARPROC GetSymbolAddressH(void* handle, unsigned int symbolNameHash);
 void* GetLibraryHandleH(unsigned int libraryNameHash);
 
+// Macro for hashing
+#define HASHA(API) (HashStringJenkinsOneAtATime32BitA((char*)API))
+
+// Debug macros
+#ifdef DEBUG
+#define DEBUG_LOG(...) do { fprintf(stderr, "[DEBUG] "); fprintf(stderr, __VA_ARGS__); fprintf(stderr, "\n"); } while(0)
+#else
+#define DEBUG_LOG(...) ((void)0)
 #endif
+
+#endif // XSPRING_H

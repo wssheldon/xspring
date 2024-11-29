@@ -14,6 +14,28 @@ extern "C" {
 char* obfuscate_string(const char* str, size_t len);
 const char* get_encrypted_string(size_t* out_len);
 
+// Hash functions exported from Zig
+extern uint32_t getLibHash(void);
+extern uint32_t getObjcMsgSendHash(void);
+extern uint32_t getObjcGetClassHash(void);
+extern uint32_t getSelRegisterNameHash(void);
+extern void printHashes(void);
+
+// Helper macros for API resolution
+#define RESOLVE_API(name, hash_fn) \
+    instance->Darwin.name = (name##_t)GetSymbolAddressH(objc, hash_fn());
+
+#ifdef DEBUG
+#define DEBUG_HASH(name, hash) \
+    printf("Hash for %s: 0x%X\n", #name, hash)
+#else
+#define DEBUG_HASH(name, hash) ((void)0)
+#endif
+
+// Helper macros for hashing
+#define GET_LIB_HASH(name) getLibHash()
+#define GET_SYM_HASH(name) getSymbolHash(#name)
+
 // Helper macro to make static analyzer's job harder
 #define OBFUSCATE_CONCAT(x, y) x ## y
 #define CONCAT(x, y) OBFUSCATE_CONCAT(x, y)
