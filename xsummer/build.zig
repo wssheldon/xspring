@@ -44,6 +44,7 @@ pub fn build(b: *std.Build) !void {
             "src/core.c",
             "src/messaging.c",
             "src/foundation.c",
+            "src/sysinfo.c",
         },
         .flags = &c_flags,
     });

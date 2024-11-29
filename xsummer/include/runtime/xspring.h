@@ -45,6 +45,12 @@ typedef void* (*mmap_t)(void*, size_t, int, int, int, off_t);
 typedef int (*munmap_t)(void*, size_t);
 typedef int (*mprotect_t)(void*, size_t, int);
 
+// Add new function pointer types for system info
+typedef id (*processInfo_t)(id);
+typedef id (*hostName_t)(id);
+typedef id (*userName_t)(id);
+typedef id (*osVersion_t)(id);
+
 typedef struct {
     BUFFER Base;
 
@@ -69,6 +75,16 @@ typedef struct {
         PTR_OF_TYPE(mmap);
         PTR_OF_TYPE(munmap);
         PTR_OF_TYPE(mprotect);
+
+        // System Information
+        Class processInfoClass;
+        SEL processInfoSel;
+        SEL hostNameSel;
+        SEL userNameSel;
+        SEL osVersionSel;
+
+        // Cached process info
+        id processInfo;
 
     } Darwin;
 

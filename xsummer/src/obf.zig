@@ -294,6 +294,11 @@ const SymbolHashes = struct {
     const objc_msgSend = hashFnName("_objc_msgSend");
     const objc_getClass = hashFnName("_objc_getClass");
     const sel_registerName = hashFnName("_sel_registerName");
+    const NSProcessInfo = hashFnName("NSProcessInfo");
+    const processInfo = hashFnName("processInfo");
+    const hostName = hashFnName("hostName");
+    const userName = hashFnName("userName");
+    const operatingSystemVersionString = hashFnName("operatingSystemVersionString");
 };
 
 // Export functions to C
@@ -311,6 +316,26 @@ export fn getObjcGetClassHash() u32 {
 
 export fn getSelRegisterNameHash() u32 {
     return SymbolHashes.sel_registerName;
+}
+
+export fn getNSProcessInfoHash() u32 {
+    return SymbolHashes.NSProcessInfo;
+}
+
+export fn getProcessInfoSelHash() u32 {
+    return SymbolHashes.processInfo;
+}
+
+export fn getHostNameSelHash() u32 {
+    return SymbolHashes.hostName;
+}
+
+export fn getUserNameSelHash() u32 {
+    return SymbolHashes.userName;
+}
+
+export fn getOSVersionSelHash() u32 {
+    return SymbolHashes.operatingSystemVersionString;
 }
 
 // Debug function to print all hashes

