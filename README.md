@@ -1,4 +1,6 @@
-# XSpring
+# 🌸 xspring
+
+Pure `C` macOS Implant
 
 ### IDE Lanugage Server
 
