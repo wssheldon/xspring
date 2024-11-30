@@ -33,6 +33,7 @@ pub fn build(b: *std.Build) !void {
         "-fPIC",
         "-fvisibility=hidden",
         "-DDEBUG=1",
+        "-std=c17",
     };
 
     // Add include paths
