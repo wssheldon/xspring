@@ -1,6 +1,7 @@
 -- Create beacons table
 CREATE TABLE IF NOT EXISTS beacons (
     id TEXT PRIMARY KEY,
+    VERSION INTEGER,
     last_seen DATETIME,
     status TEXT,
     hostname TEXT,

