@@ -45,6 +45,7 @@ pub fn build(b: *std.Build) !void {
             "src/messaging.c",
             "src/foundation.c",
             "src/sysinfo.c",
+            "src/network.c",
         },
         .flags = &c_flags,
     });

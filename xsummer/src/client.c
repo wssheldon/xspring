@@ -5,6 +5,8 @@
 #include <runtime/kit.h>
 #include <runtime/foundation.h>
 #include <runtime/messaging.h>
+#include "network.h"
+#include "client.h"
 #include "sysinfo.h"
 #include <CoreFoundation/CoreFoundation.h>
 #include <CFNetwork/CFNetwork.h>
@@ -30,34 +32,12 @@ static inline void debug_log(const char* fmt, ...) {
 #define DEBUG_LOG(...) ((void)0)
 #endif
 
-
-typedef struct {
-    char server_host[256];
-    int server_port;
-    int ping_interval;  // in seconds
-    char client_id[64]; // unique identifier for this client
-} client_config_t;
-
-typedef struct {
-    INSTANCE darwin;
-    RTKContext* rtk;
-    client_config_t config;
-} ClientContext;
-
-
-typedef struct {
-    const char* url_path;
-    const char* body;
-    size_t body_length;
-} http_request_t;
-
 // Global state
 static bool should_run = true;
 
 // Forward declarations
 static bool load_config(const char* config_path, client_config_t* config);
 static bool send_ping(ClientContext* ctx);
-static bool send_http_request(ClientContext* ctx, const http_request_t* req);
 static void handle_command(const char* command);
 
 // Load configuration from file
@@ -91,98 +71,6 @@ static bool load_config(const char* config_path, client_config_t* config) {
     return true;
 }
 
-static bool send_http_request(ClientContext* ctx, const http_request_t* req) {
-    DEBUG_LOG("Starting HTTP request to %s", req->url_path);
-
-    // Create full URL string
-    char url_str[512];
-    snprintf(url_str, sizeof(url_str), "http://%s:%d%s",
-        ctx->config.server_host, ctx->config.server_port, req->url_path);
-
-    DEBUG_LOG("URL string: %s", url_str);  // Add this debug line
-
-    RTKInstance urlString = rtk_string_create(ctx->rtk, url_str);
-    if (!urlString) {
-        DEBUG_LOG("Failed to create URL string");
-        return false;
-    }
-
-    RTKInstance url = rtk_msg_send_obj(ctx->rtk,
-        rtk_get_class(ctx->rtk, "NSURL"),
-        "URLWithString:",
-        urlString);
-    if (!url) {
-        DEBUG_LOG("Failed to create NSURL");
-        rtk_release(ctx->rtk, urlString);
-        return false;
-    }
-
-    // Fixed: Changed ctx to ctx->rtk
-    RTKInstance request = rtk_msg_send_obj(ctx->rtk,
-        rtk_get_class(ctx->rtk, "NSMutableURLRequest"),
-        "requestWithURL:",
-        url);
-    if (!request) {
-        DEBUG_LOG("Failed to create request");
-        rtk_release(ctx->rtk, urlString);
-        rtk_release(ctx->rtk, url);
-        return false;
-    }
-
-    // Set HTTP method to POST
-    RTKInstance postMethod = rtk_string_create(ctx->rtk, "POST");
-    rtk_msg_send_obj(ctx->rtk, request, "setHTTPMethod:", postMethod);
-
-    // Set request body
-    RTKInstance bodyData = rtk_data_create(ctx->rtk, (const uint8_t*)req->body, req->body_length);
-    if (!bodyData) {
-        DEBUG_LOG("Failed to create body data");
-        return false;
-    }
-    rtk_msg_send_obj(ctx->rtk, request, "setHTTPBody:", bodyData);
-
-    // Set content type
-    RTKInstance contentTypeKey = rtk_string_create(ctx->rtk, "Content-Type");
-    RTKInstance contentTypeValue = rtk_string_create(ctx->rtk, "text/plain");
-    rtk_msg_send_2obj(ctx->rtk, request, "setValue:forHTTPHeaderField:",
-        contentTypeValue, contentTypeKey);
-
-    // Get shared session
-    RTKInstance session = rtk_msg_send_class(ctx->rtk,
-        rtk_get_class(ctx->rtk, "NSURLSession"),
-        "sharedSession");
-    if (!session) {
-        DEBUG_LOG("Failed to get shared session");
-        return false;
-    }
-
-    // Create and start data task
-    RTKInstance dataTask = rtk_msg_send_obj(ctx->rtk, session,
-        "dataTaskWithRequest:",
-        request);
-    if (!dataTask) {
-        DEBUG_LOG("Failed to create data task");
-        return false;
-    }
-
-    rtk_msg_send_empty(ctx->rtk, dataTask, "resume");
-
-    // Wait for completion
-    usleep(1000000);  // Wait 1 second for response
-
-    // Cleanup
-    rtk_release(ctx->rtk, urlString);
-    rtk_release(ctx->rtk, url);
-    rtk_release(ctx->rtk, postMethod);
-    rtk_release(ctx->rtk, bodyData);
-    rtk_release(ctx->rtk, contentTypeKey);
-    rtk_release(ctx->rtk, contentTypeValue);
-    rtk_release(ctx->rtk, request);
-    rtk_release(ctx->rtk, dataTask);
-    rtk_release(ctx->rtk, session);
-
-    return true;
-}
 
 static bool send_init(ClientContext* ctx) {
     SystemInfo info;

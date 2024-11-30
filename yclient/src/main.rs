@@ -14,6 +14,9 @@ struct Beacon {
     id: String,
     last_seen: String,
     status: String,
+    hostname: Option<String>,
+    username: Option<String>,
+    os_version: Option<String>,
 }
 
 impl Client {
@@ -135,7 +138,6 @@ impl Client {
 
         Ok(())
     }
-
     fn list_beacons(&self) {
         match reqwest::blocking::get(format!("{}/beacons", self.server_url)) {
             Ok(response) => {
@@ -143,7 +145,7 @@ impl Client {
                     match response.json::<Vec<Beacon>>() {
                         Ok(beacons) => {
                             println!("\n{}", "Active Beacons:".green().bold());
-                            println!("{:-<50}", "");
+                            println!("{:-<80}", "");
                             for beacon in beacons {
                                 println!(
                                     "{}: {} ({})",
@@ -151,8 +153,18 @@ impl Client {
                                     beacon.last_seen.yellow(),
                                     beacon.status.green()
                                 );
+                                if let Some(hostname) = beacon.hostname {
+                                    println!("  Hostname: {}", hostname.blue());
+                                }
+                                if let Some(username) = beacon.username {
+                                    println!("  User: {}", username.blue());
+                                }
+                                if let Some(os_version) = beacon.os_version {
+                                    println!("  OS: {}", os_version.blue());
+                                }
+                                println!("{:-<80}", "");
                             }
-                            println!("{:-<50}\n", "");
+                            println!();
                         }
                         Err(e) => println!("{} {}", "Failed to parse beacons:".red(), e),
                     }

@@ -2,7 +2,10 @@
 CREATE TABLE IF NOT EXISTS beacons (
     id TEXT PRIMARY KEY,
     last_seen DATETIME,
-    status TEXT
+    status TEXT,
+    hostname TEXT,
+    username TEXT,
+    os_version TEXT
 );
 
 -- Create commands table
