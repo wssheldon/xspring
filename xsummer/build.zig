@@ -5,11 +5,11 @@ pub fn build(b: *std.Build) !void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
-    // Keep track of targets for compile_commands
+    // keep track of targets for compile_commands
     var targets = std.ArrayList(*std.Build.Step.Compile).init(b.allocator);
     defer targets.deinit();
 
-    // Add obfuscation object
+    // add obfuscation object
     const obf = b.addObject(.{
         .name = "obfuscate",
         .root_source_file = b.path("src/obf.zig"),
@@ -17,7 +17,7 @@ pub fn build(b: *std.Build) !void {
         .optimize = optimize,
     });
 
-    // Create library
+    // create library
     const runtime_lib = b.addStaticLibrary(.{
         .name = "runtime",
         .target = target,
@@ -36,19 +36,33 @@ pub fn build(b: *std.Build) !void {
         "-std=c17",
     };
 
-    // Add include paths
+    // add include paths
     runtime_lib.addIncludePath(b.path("include"));
     runtime_lib.addIncludePath(b.path("include/runtime"));
 
+    // collect all C source files from src directory
+    var src_files = std.ArrayList([]const u8).init(b.allocator);
+    defer src_files.deinit();
+
+    var dir = try std.fs.cwd().openDir("src", .{ .iterate = true });
+    defer dir.close();
+
+    var walker = try dir.walk(b.allocator);
+    defer walker.deinit();
+
+    while (try walker.next()) |entry| {
+        if (entry.kind == .file) {
+            const ext = std.fs.path.extension(entry.basename);
+            if (std.mem.eql(u8, ext, ".c")) {
+                const path = try std.fs.path.join(b.allocator, &.{ "src", entry.path });
+                try src_files.append(path);
+            }
+        }
+    }
+
+    // use the collected files
     runtime_lib.addCSourceFiles(.{
-        .files = &.{
-            "src/core.c",
-            "src/messaging.c",
-            "src/foundation.c",
-            "src/sysinfo.c",
-            "src/network.c",
-            "src/protocol.c",
-        },
+        .files = src_files.items,
         .flags = &c_flags,
     });
 
@@ -63,7 +77,7 @@ pub fn build(b: *std.Build) !void {
 
     try targets.append(client);
 
-    // Add include paths for client
+    // add include paths for client
     client.addIncludePath(b.path("include"));
     client.addIncludePath(b.path("include/runtime"));
 
