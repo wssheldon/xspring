@@ -7,6 +7,7 @@
 #include "sysinfo.h"
 
 #define PROTOCOL_VERSION 1
+#define PROTOCOL_MSG_COMMAND 3
 
 typedef uint8_t protocol_msg_type_t;
 enum {
@@ -49,5 +50,6 @@ bool protocol_has_error(const ProtocolBuilder* builder);
 ProtocolBuilder* protocol_create_ping(const char* client_id);
 ProtocolBuilder* protocol_create_init(const char* client_id, const SystemInfo* info);
 ProtocolBuilder* protocol_create_error(int error_code, const char* error_message);
+ProtocolBuilder* protocol_create_command_response(const char* command_id, const char* result);
 
 #endif

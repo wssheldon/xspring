@@ -68,6 +68,7 @@ pub fn build(b: *std.Build) !void {
 
     runtime_lib.addObject(obf);
     runtime_lib.linkFramework("Foundation");
+    runtime_lib.linkFramework("CoreFoundation");
 
     const client = b.addExecutable(.{
         .name = "client",
