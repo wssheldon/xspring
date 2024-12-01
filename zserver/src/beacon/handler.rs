@@ -1,5 +1,5 @@
 use axum::{
-    extract::{Path, State},
+    extract::State,
     response::IntoResponse,
     http::StatusCode,
     body::Bytes,
