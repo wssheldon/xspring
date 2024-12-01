@@ -7,21 +7,21 @@
 #define MAX_KEY_LENGTH ((size_t)64)
 
 struct ProtocolBuilder {
-  char *buffer;
+  char* buffer;
   size_t capacity;
   size_t length;
   bool error;
   protocol_msg_type_t type;
-} __attribute__((aligned(sizeof(void *))));
+} __attribute__((aligned(sizeof(void*))));
 
 static const char base64_chars[] =
     "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
-static char *base64_encode(const unsigned char *data, size_t input_length,
-                           size_t *output_length) {
+static char* base64_encode(const unsigned char* data, size_t input_length,
+                           size_t* output_length) {
   *output_length = 4 * ((input_length + 2) / 3);
 
-  char *encoded_data = malloc(*output_length + 1);
+  char* encoded_data = malloc(*output_length + 1);
   if (!encoded_data)
     return NULL;
 
@@ -50,45 +50,45 @@ static char *base64_encode(const unsigned char *data, size_t input_length,
   return encoded_data;
 }
 
-static char *escape_string(const char *input, size_t *output_length) {
+static char* escape_string(const char* input, size_t* output_length) {
   if (!input || !output_length)
     return NULL;
 
   size_t input_len = strlen(input);
   // allocate worst-case scenario (every character needs escaping)
-  char *output = malloc(input_len * 2 + 1);
+  char* output = malloc(input_len * 2 + 1);
   if (!output)
     return NULL;
 
   size_t i, j;
   for (i = 0, j = 0; i < input_len; i++) {
     switch (input[i]) {
-    case '\n':
-      output[j++] = '\\';
-      output[j++] = 'n';
-      break;
-    case '\r':
-      output[j++] = '\\';
-      output[j++] = 'r';
-      break;
-    case '\t':
-      output[j++] = '\\';
-      output[j++] = 't';
-      break;
-    case '\\':
-      output[j++] = '\\';
-      output[j++] = '\\';
-      break;
-    case ':':
-      output[j++] = '\\';
-      output[j++] = ':';
-      break;
-    default:
-      // only include printable characters
-      if (input[i] >= 32 && input[i] <= 126) {
-        output[j++] = input[i];
-      }
-      break;
+      case '\n':
+        output[j++] = '\\';
+        output[j++] = 'n';
+        break;
+      case '\r':
+        output[j++] = '\\';
+        output[j++] = 'r';
+        break;
+      case '\t':
+        output[j++] = '\\';
+        output[j++] = 't';
+        break;
+      case '\\':
+        output[j++] = '\\';
+        output[j++] = '\\';
+        break;
+      case ':':
+        output[j++] = '\\';
+        output[j++] = ':';
+        break;
+      default:
+        // only include printable characters
+        if (input[i] >= 32 && input[i] <= 126) {
+          output[j++] = input[i];
+        }
+        break;
     }
   }
 
@@ -96,11 +96,11 @@ static char *escape_string(const char *input, size_t *output_length) {
   *output_length = j;
 
   // reallocate to actual size needed
-  char *final = realloc(output, j + 1);
+  char* final = realloc(output, j + 1);
   return final ? final : output;
 }
 
-static inline bool ensure_capacity(ProtocolBuilder *builder,
+static inline bool ensure_capacity(ProtocolBuilder* builder,
                                    size_t additional) {
   if (!builder || builder->error)
     return false;
@@ -114,7 +114,7 @@ static inline bool ensure_capacity(ProtocolBuilder *builder,
     new_capacity *= 2;
   }
 
-  char *new_buffer = realloc(builder->buffer, new_capacity);
+  char* new_buffer = realloc(builder->buffer, new_capacity);
   if (!new_buffer) {
     builder->error = true;
     return false;
@@ -125,7 +125,7 @@ static inline bool ensure_capacity(ProtocolBuilder *builder,
   return true;
 }
 
-static bool append_data(ProtocolBuilder *builder, const char *data,
+static bool append_data(ProtocolBuilder* builder, const char* data,
                         size_t length) {
   if (!ensure_capacity(builder, length + 1))
     return false;
@@ -137,8 +137,8 @@ static bool append_data(ProtocolBuilder *builder, const char *data,
   return true;
 }
 
-NODISCARD ProtocolBuilder *protocol_builder_create(protocol_msg_type_t type) {
-  ProtocolBuilder *builder = calloc(1, sizeof(*builder));
+NODISCARD ProtocolBuilder* protocol_builder_create(protocol_msg_type_t type) {
+  ProtocolBuilder* builder = calloc(1, sizeof(*builder));
   if (!builder)
     return NULL;
 
@@ -167,7 +167,7 @@ NODISCARD ProtocolBuilder *protocol_builder_create(protocol_msg_type_t type) {
   return builder;
 }
 
-void protocol_builder_destroy(ProtocolBuilder *builder) {
+void protocol_builder_destroy(ProtocolBuilder* builder) {
   if (!builder)
     return;
   if (builder->buffer) {
@@ -179,21 +179,21 @@ void protocol_builder_destroy(ProtocolBuilder *builder) {
   free(builder);
 }
 
-bool protocol_add_string(ProtocolBuilder *builder, const char *key,
-                         const char *value) {
+bool protocol_add_string(ProtocolBuilder* builder, const char* key,
+                         const char* value) {
   if (!builder || !key || !value || builder->error)
     return false;
 
   size_t escaped_len = 0;
-  char *escaped_value = escape_string(value, &escaped_len);
+  char* escaped_value = escape_string(value, &escaped_len);
   if (!escaped_value)
     return false;
 
   // Ensure the field buffer is large enough
   size_t key_len = strlen(key);
   size_t total_len =
-      key_len + escaped_len + 3; // key + ": " + escaped_value + "\n"
-  char *field = malloc(total_len + 1);
+      key_len + escaped_len + 3;  // key + ": " + escaped_value + "\n"
+  char* field = malloc(total_len + 1);
 
   if (!field) {
     free(escaped_value);
@@ -214,30 +214,30 @@ bool protocol_add_string(ProtocolBuilder *builder, const char *key,
   return result;
 }
 
-bool protocol_add_int(ProtocolBuilder *builder, const char *key, int value) {
+bool protocol_add_int(ProtocolBuilder* builder, const char* key, int value) {
   char value_str[32];
   snprintf(value_str, sizeof(value_str), "%d", value);
   return protocol_add_string(builder, key, value_str);
 }
 
-bool protocol_add_uint(ProtocolBuilder *builder, const char *key,
+bool protocol_add_uint(ProtocolBuilder* builder, const char* key,
                        unsigned int value) {
   char value_str[32];
   snprintf(value_str, sizeof(value_str), "%u", value);
   return protocol_add_string(builder, key, value_str);
 }
 
-bool protocol_add_bool(ProtocolBuilder *builder, const char *key, bool value) {
+bool protocol_add_bool(ProtocolBuilder* builder, const char* key, bool value) {
   return protocol_add_string(builder, key, value ? "true" : "false");
 }
 
-bool protocol_add_binary(ProtocolBuilder *builder, const char *key,
-                         const void *data, size_t length) {
+bool protocol_add_binary(ProtocolBuilder* builder, const char* key,
+                         const void* data, size_t length) {
   if (!builder || !key || !data || builder->error)
     return false;
 
   // Base64 encode the binary data
-  char *encoded = NULL;
+  char* encoded = NULL;
   size_t encoded_len = 0;
 
   encoded = base64_encode(data, length, &encoded_len);
@@ -250,9 +250,9 @@ bool protocol_add_binary(ProtocolBuilder *builder, const char *key,
   return result;
 }
 
-static char *bytes_to_hex(const unsigned char *data, size_t length,
-                          size_t *out_len) {
-  char *hex = malloc(length * 2 + 1);
+static char* bytes_to_hex(const unsigned char* data, size_t length,
+                          size_t* out_len) {
+  char* hex = malloc(length * 2 + 1);
   if (!hex)
     return NULL;
 
@@ -266,13 +266,13 @@ static char *bytes_to_hex(const unsigned char *data, size_t length,
   return hex;
 }
 
-bool protocol_add_bytes(ProtocolBuilder *builder, const char *key,
-                        const unsigned char *data, size_t length) {
+bool protocol_add_bytes(ProtocolBuilder* builder, const char* key,
+                        const unsigned char* data, size_t length) {
   if (!builder || !key || !data || builder->error)
     return false;
 
   size_t encoded_len = 0;
-  char *encoded = base64_encode(data, length, &encoded_len);
+  char* encoded = base64_encode(data, length, &encoded_len);
   if (!encoded)
     return false;
 
@@ -282,13 +282,13 @@ bool protocol_add_bytes(ProtocolBuilder *builder, const char *key,
   return result;
 }
 
-bool protocol_add_hex(ProtocolBuilder *builder, const char *key,
-                      const unsigned char *data, size_t length) {
+bool protocol_add_hex(ProtocolBuilder* builder, const char* key,
+                      const unsigned char* data, size_t length) {
   if (!builder || !key || !data || builder->error)
     return false;
 
   size_t hex_len = 0;
-  char *hex = bytes_to_hex(data, length, &hex_len);
+  char* hex = bytes_to_hex(data, length, &hex_len);
   if (!hex)
     return false;
 
@@ -298,21 +298,21 @@ bool protocol_add_hex(ProtocolBuilder *builder, const char *key,
   return result;
 }
 
-const char *protocol_get_message(const ProtocolBuilder *builder) {
+const char* protocol_get_message(const ProtocolBuilder* builder) {
   return builder && !builder->error ? builder->buffer : NULL;
 }
 
-size_t protocol_get_length(const ProtocolBuilder *builder) {
+size_t protocol_get_length(const ProtocolBuilder* builder) {
   return builder && !builder->error ? builder->length : 0;
 }
 
-bool protocol_has_error(const ProtocolBuilder *builder) {
+bool protocol_has_error(const ProtocolBuilder* builder) {
   return builder ? builder->error : true;
 }
 
 // Helper functions
-ProtocolBuilder *protocol_create_ping(const char *client_id) {
-  ProtocolBuilder *builder = protocol_builder_create(PROTOCOL_MSG_PING);
+ProtocolBuilder* protocol_create_ping(const char* client_id) {
+  ProtocolBuilder* builder = protocol_builder_create(PROTOCOL_MSG_PING);
   if (!builder)
     return NULL;
 
@@ -324,12 +324,12 @@ ProtocolBuilder *protocol_create_ping(const char *client_id) {
   return builder;
 }
 
-ProtocolBuilder *protocol_create_init(const char *client_id,
-                                      const SystemInfo *info) {
+ProtocolBuilder* protocol_create_init(const char* client_id,
+                                      const SystemInfo* info) {
   if (!client_id || !info)
     return NULL;
 
-  ProtocolBuilder *builder = protocol_builder_create(PROTOCOL_MSG_INIT);
+  ProtocolBuilder* builder = protocol_builder_create(PROTOCOL_MSG_INIT);
   if (!builder)
     return NULL;
 
@@ -346,14 +346,35 @@ ProtocolBuilder *protocol_create_init(const char *client_id,
   return builder;
 }
 
-ProtocolBuilder *protocol_create_error(int error_code,
-                                       const char *error_message) {
-  ProtocolBuilder *builder = protocol_builder_create(PROTOCOL_MSG_ERROR);
+ProtocolBuilder* protocol_create_error(int error_code,
+                                       const char* error_message) {
+  ProtocolBuilder* builder = protocol_builder_create(PROTOCOL_MSG_ERROR);
   if (!builder)
     return NULL;
 
   bool success = protocol_add_int(builder, "code", error_code) &&
                  protocol_add_string(builder, "message", error_message);
+
+  if (!success) {
+    protocol_builder_destroy(builder);
+    return NULL;
+  }
+
+  return builder;
+}
+
+ProtocolBuilder* protocol_create_command_response(const char* command_id,
+                                                  const char* result) {
+  if (!command_id || !result)
+    return NULL;
+
+  ProtocolBuilder* builder =
+      protocol_builder_create(PROTOCOL_MSG_COMMAND_RESPONSE);
+  if (!builder)
+    return NULL;
+
+  bool success = protocol_add_string(builder, "command_id", command_id) &&
+                 protocol_add_string(builder, "result", result);
 
   if (!success) {
     protocol_builder_destroy(builder);

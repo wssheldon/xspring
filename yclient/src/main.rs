@@ -19,6 +19,23 @@ struct Beacon {
     os_version: Option<String>,
 }
 
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+struct Command {
+    id: i64,
+    beacon_id: String,
+    command: String,
+    status: String,
+    created_at: String,
+    result: Option<String>,
+    completed_at: Option<String>,
+}
+
+#[derive(Debug, serde::Serialize)]
+struct NewCommand {
+    beacon_id: String,
+    command: String,
+}
+
 impl Client {
     fn new() -> Result<Self> {
         let mut editor = DefaultEditor::new()?;
@@ -42,6 +59,14 @@ impl Client {
         println!("\n{}", "Available Commands:".green().bold());
         println!("  {} - Send ping to server", "ping".cyan());
         println!("  {} - List active beacons", "beacons".cyan());
+        println!(
+            "  {} - Send command to beacon",
+            "run <beacon_id> <command>".cyan()
+        );
+        println!(
+            "  {} - List commands for beacon",
+            "commands <beacon_id>".cyan()
+        );
         println!("  {} - Show this help message", "help".cyan());
         println!("  {} - Clear the screen", "clear".cyan());
         println!("  {} - Exit the client", "exit".cyan());
@@ -49,32 +74,142 @@ impl Client {
     }
 
     fn handle_command(&self, command: &str) -> bool {
-        match command.trim() {
-            "exit" | "quit" => {
+        let parts: Vec<&str> = command.trim().split_whitespace().collect();
+        match parts.get(0).map(|s| *s) {
+            Some("exit") | Some("quit") => {
                 println!("{}", "Goodbye!".green());
                 false
             }
-            "help" => {
+            Some("help") => {
                 self.print_help();
                 true
             }
-            "clear" => {
+            Some("clear") => {
                 print!("\x1B[2J\x1B[1;1H");
                 true
             }
-            "ping" => {
+            Some("ping") => {
                 self.send_ping();
                 true
             }
-            "beacons" => {
+            Some("beacons") => {
                 self.list_beacons();
                 true
             }
-            "" => true,
-            cmd => {
+            Some("run") => {
+                if parts.len() < 3 {
+                    println!("{}", "Usage: run <beacon_id> <command>".red());
+                } else {
+                    let beacon_id = parts[1];
+                    let command = parts[2..].join(" ");
+                    self.send_command(beacon_id, &command);
+                }
+                true
+            }
+            Some("commands") => {
+                if parts.len() != 2 {
+                    println!("{}", "Usage: commands <beacon_id>".red());
+                } else {
+                    self.list_commands(parts[1]);
+                }
+                true
+            }
+            Some("") => true,
+            Some(cmd) => {
                 println!("{} {}", "Unknown command:".red(), cmd);
                 true
             }
+            None => true,
+        }
+    }
+
+    fn send_command(&self, beacon_id: &str, command: &str) {
+        let new_command = NewCommand {
+            beacon_id: beacon_id.to_string(),
+            command: command.to_string(),
+        };
+
+        match reqwest::blocking::Client::new()
+            .post(format!("{}/command/new", self.server_url))
+            .json(&new_command)
+            .send()
+        {
+            Ok(response) => {
+                if response.status().is_success() {
+                    match response.json::<Command>() {
+                        Ok(cmd) => {
+                            println!(
+                                "{} Command {} scheduled for beacon {}",
+                                "Success:".green(),
+                                cmd.id.to_string().yellow(),
+                                cmd.beacon_id.cyan()
+                            );
+                        }
+                        Err(e) => println!("{} {}", "Failed to parse response:".red(), e),
+                    }
+                } else {
+                    println!(
+                        "{} {} ({})",
+                        "Server error:".red(),
+                        response.status(),
+                        response.status().as_str()
+                    );
+                }
+            }
+            Err(e) => println!("{} {}", "Failed to send command:".red(), e),
+        }
+    }
+
+    fn list_commands(&self, beacon_id: &str) {
+        match reqwest::blocking::get(format!("{}/command/list/{}", self.server_url, beacon_id)) {
+            Ok(response) => {
+                if response.status().is_success() {
+                    match response.json::<Vec<Command>>() {
+                        Ok(commands) => {
+                            if commands.is_empty() {
+                                println!(
+                                    "\n{} No commands found for beacon {}",
+                                    "Info:".blue(),
+                                    beacon_id
+                                );
+                            } else {
+                                println!(
+                                    "\n{} for beacon {}:",
+                                    "Commands".green().bold(),
+                                    beacon_id.cyan()
+                                );
+                                println!("{:-<80}", "");
+                                for cmd in commands {
+                                    println!(
+                                        "ID: {} | Status: {} | Created: {}",
+                                        cmd.id.to_string().yellow(),
+                                        cmd.status.green(),
+                                        cmd.created_at.blue()
+                                    );
+                                    println!("Command: {}", cmd.command);
+                                    if let Some(result) = cmd.result {
+                                        println!("Result: {}", result.green());
+                                    }
+                                    if let Some(completed_at) = cmd.completed_at {
+                                        println!("Completed: {}", completed_at.blue());
+                                    }
+                                    println!("{:-<80}", "");
+                                }
+                            }
+                            println!();
+                        }
+                        Err(e) => println!("{} {}", "Failed to parse commands:".red(), e),
+                    }
+                } else {
+                    println!(
+                        "{} {} ({})",
+                        "Server error:".red(),
+                        response.status(),
+                        response.status().as_str()
+                    );
+                }
+            }
+            Err(e) => println!("{} {}", "Failed to fetch commands:".red(), e),
         }
     }
 

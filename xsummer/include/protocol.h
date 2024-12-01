@@ -10,11 +10,13 @@
 #define PROTOCOL_MSG_COMMAND 3
 
 typedef uint8_t protocol_msg_type_t;
+
 enum {
     PROTOCOL_MSG_PING = 1,
     PROTOCOL_MSG_INIT,
     PROTOCOL_MSG_INFO,
-    PROTOCOL_MSG_ERROR
+    PROTOCOL_MSG_ERROR,
+    PROTOCOL_MSG_COMMAND_RESPONSE
 };
 
 typedef struct ProtocolBuilder ProtocolBuilder;
