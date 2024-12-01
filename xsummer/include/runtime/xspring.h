@@ -86,6 +86,21 @@ typedef struct {
         // Cached process info
         id processInfo;
 
+        // Network related classes
+        Class NSURLClass;
+        Class NSURLSessionClass;
+        Class NSMutableURLRequestClass;
+
+        // Network related selectors
+        SEL URLWithStringSel;
+        SEL requestWithURLSel;
+        SEL setHTTPMethodSel;
+        SEL setHTTPBodySel;
+        SEL sharedSessionSel;
+        SEL dataTaskWithRequestSel;
+        SEL resumeSel;
+        SEL cancelSel;
+
     } Darwin;
 
 } INSTANCE;

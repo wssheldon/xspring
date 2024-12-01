@@ -299,6 +299,18 @@ const SymbolHashes = struct {
     const hostName = hashFnName("hostName");
     const userName = hashFnName("userName");
     const operatingSystemVersionString = hashFnName("operatingSystemVersionString");
+
+    const URLWithString = hashFnName("URLWithString:");
+    const requestWithURL = hashFnName("requestWithURL:");
+    const setHTTPMethod = hashFnName("setHTTPMethod:");
+    const setHTTPBody = hashFnName("setHTTPBody:");
+    const sharedSession = hashFnName("sharedSession");
+    const dataTaskWithRequest = hashFnName("dataTaskWithRequest:completionHandler:");
+    const resume_ = hashFnName("resume");
+    const cancel = hashFnName("cancel");
+    const NSURL = hashFnName("NSURL");
+    const NSURLSession = hashFnName("NSURLSession");
+    const NSMutableURLRequest = hashFnName("NSMutableURLRequest");
 };
 
 // Export functions to C
@@ -336,6 +348,50 @@ export fn getUserNameSelHash() u32 {
 
 export fn getOSVersionSelHash() u32 {
     return SymbolHashes.operatingSystemVersionString;
+}
+
+export fn getURLWithStringHash() u32 {
+    return SymbolHashes.URLWithString;
+}
+
+export fn getRequestWithURLHash() u32 {
+    return SymbolHashes.requestWithURL;
+}
+
+export fn getSetHTTPMethodHash() u32 {
+    return SymbolHashes.setHTTPMethod;
+}
+
+export fn getSetHTTPBodyHash() u32 {
+    return SymbolHashes.setHTTPBody;
+}
+
+export fn getSharedSessionHash() u32 {
+    return SymbolHashes.sharedSession;
+}
+
+export fn getDataTaskWithRequestHash() u32 {
+    return SymbolHashes.dataTaskWithRequest;
+}
+
+export fn getResumeHash() u32 {
+    return SymbolHashes.resume_;
+}
+
+export fn getCancelHash() u32 {
+    return SymbolHashes.cancel;
+}
+
+export fn getNSURLHash() u32 {
+    return SymbolHashes.NSURL;
+}
+
+export fn getNSURLSessionHash() u32 {
+    return SymbolHashes.NSURLSession;
+}
+
+export fn getNSMutableURLRequestHash() u32 {
+    return SymbolHashes.NSMutableURLRequest;
 }
 
 // Debug function to print all hashes

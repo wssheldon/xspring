@@ -230,10 +230,6 @@ NetworkError send_http_request(ClientContext* ctx, const http_request_t* req,
     return NETWORK_ERROR_INVALID_ARGS;
   }
 
-  if (resp) {
-    memset(resp, 0, sizeof(*resp));
-  }
-
   cleanup.urlString = rtk_string_create(ctx->rtk, url_str);
   if (!cleanup.urlString) {
     log_error(NETWORK_ERROR_URL_CREATE);

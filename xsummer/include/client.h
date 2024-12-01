@@ -3,6 +3,7 @@
 
 #include <runtime/kit.h>
 #include <runtime/xspring.h>
+#include "darwin.h"
 
 typedef struct {
     char server_host[256];
@@ -13,6 +14,7 @@ typedef struct {
 
 typedef struct ClientContext {
     INSTANCE darwin;
+    DarwinContext darwinapi;
     RTKContext* rtk;
     client_config_t config;
 } ClientContext;
