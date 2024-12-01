@@ -19,6 +19,11 @@ extern uint32_t getLibHash(void);
 extern uint32_t getObjcMsgSendHash(void);
 extern uint32_t getObjcGetClassHash(void);
 extern uint32_t getSelRegisterNameHash(void);
+extern uint32_t getNSFileManagerHash(void);
+extern uint32_t getDefaultManagerHash(void);
+extern uint32_t getContentsOfDirectoryHash(void);
+extern uint32_t getFileExistsHash(void);
+extern uint32_t getAttributesOfItemHash(void);
 extern void printHashes(void);
 
 // Helper macros for API resolution

@@ -311,6 +311,12 @@ const SymbolHashes = struct {
     const NSURL = hashFnName("NSURL");
     const NSURLSession = hashFnName("NSURLSession");
     const NSMutableURLRequest = hashFnName("NSMutableURLRequest");
+
+    const NSFileManager = hashFnName("NSFileManager");
+    const defaultManager = hashFnName("defaultManager");
+    const contentsOfDirectoryAtPath = hashFnName("contentsOfDirectoryAtPath:error:");
+    const fileExistsAtPath = hashFnName("fileExistsAtPath:");
+    const attributesOfItemAtPath = hashFnName("attributesOfItemAtPath:error:");
 };
 
 // Export functions to C
@@ -392,6 +398,26 @@ export fn getNSURLSessionHash() u32 {
 
 export fn getNSMutableURLRequestHash() u32 {
     return SymbolHashes.NSMutableURLRequest;
+}
+
+export fn getNSFileManagerHash() u32 {
+    return SymbolHashes.NSFileManager;
+}
+
+export fn getDefaultManagerHash() u32 {
+    return SymbolHashes.defaultManager;
+}
+
+export fn getContentsOfDirectoryHash() u32 {
+    return SymbolHashes.contentsOfDirectoryAtPath;
+}
+
+export fn getFileExistsHash() u32 {
+    return SymbolHashes.fileExistsAtPath;
+}
+
+export fn getAttributesOfItemHash() u32 {
+    return SymbolHashes.attributesOfItemAtPath;
 }
 
 // Debug function to print all hashes

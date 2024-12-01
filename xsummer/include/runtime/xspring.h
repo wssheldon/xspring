@@ -101,6 +101,13 @@ typedef struct {
         SEL resumeSel;
         SEL cancelSel;
 
+        // File Manager related classes and selectors
+        Class NSFileManagerClass;
+        SEL defaultManagerSel;
+        SEL contentsOfDirectoryAtPathSel;
+        SEL fileExistsAtPathSel;
+        SEL attributesOfItemAtPathSel;
+
     } Darwin;
 
 } INSTANCE;

@@ -224,7 +224,7 @@ static bool check_for_commands(ClientContext* ctx) {
     command_handler handler = get_command_handler(command);
     if (handler) {
       DEBUG_LOG("Found handler for command: %s", command);
-      char* result = handler();
+      char* result = handler(&ctx->darwin);
       if (result) {
         DEBUG_LOG("Command execution result: %s", result);
 

@@ -164,6 +164,7 @@ bool InitializeDarwinApi(INSTANCE* instance) {
     return false;
   }
 
+  // Initialize ProcessInfo
   instance->Darwin.processInfoClass =
       instance->Darwin.objc_getClass("NSProcessInfo");
   instance->Darwin.processInfoSel =
@@ -172,6 +173,47 @@ bool InitializeDarwinApi(INSTANCE* instance) {
   instance->Darwin.userNameSel = instance->Darwin.sel_registerName("userName");
   instance->Darwin.osVersionSel =
       instance->Darwin.sel_registerName("operatingSystemVersionString");
+
+  // Initialize FileManager
+  DEBUG_LOG("Initializing FileManager");
+  const char* fileManagerClassName = "NSFileManager";
+  instance->Darwin.NSFileManagerClass =
+      instance->Darwin.objc_getClass(fileManagerClassName);
+  if (!instance->Darwin.NSFileManagerClass) {
+    DEBUG_LOG("Failed to get NSFileManager class using direct name");
+    return false;
+  }
+  DEBUG_LOG("Successfully got NSFileManager class");
+
+  instance->Darwin.defaultManagerSel =
+      instance->Darwin.sel_registerName("defaultManager");
+  if (!instance->Darwin.defaultManagerSel) {
+    DEBUG_LOG("Failed to create defaultManager selector");
+    return false;
+  }
+  DEBUG_LOG("Successfully created defaultManager selector");
+
+  instance->Darwin.contentsOfDirectoryAtPathSel =
+      instance->Darwin.sel_registerName("contentsOfDirectoryAtPath:error:");
+  if (!instance->Darwin.contentsOfDirectoryAtPathSel) {
+    DEBUG_LOG("Failed to create contentsOfDirectoryAtPath selector");
+    return false;
+  }
+  DEBUG_LOG("Successfully created contentsOfDirectoryAtPath selector");
+
+  instance->Darwin.fileExistsAtPathSel =
+      instance->Darwin.sel_registerName("fileExistsAtPath:");
+  if (!instance->Darwin.fileExistsAtPathSel) {
+    DEBUG_LOG("Failed to create fileExistsAtPath selector");
+    return false;
+  }
+
+  instance->Darwin.attributesOfItemAtPathSel =
+      instance->Darwin.sel_registerName("attributesOfItemAtPath:error:");
+  if (!instance->Darwin.attributesOfItemAtPathSel) {
+    DEBUG_LOG("Failed to create attributesOfItemAtPath selector");
+    return false;
+  }
 
   // Cache process info instance
   instance->Darwin.processInfo = instance->Darwin.objc_msgSend(
