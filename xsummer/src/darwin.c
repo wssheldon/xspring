@@ -256,6 +256,21 @@ bool InitializeDarwinApi(INSTANCE* instance) {
     return false;
   }
 
+  instance->Darwin.NSRunLoopClass = instance->Darwin.objc_getClass("NSRunLoop");
+  if (!instance->Darwin.NSRunLoopClass) {
+    DEBUG_LOG("Failed to get NSRunLoop class");
+    return false;
+  }
+
+  instance->Darwin.beginModalSessionSel =
+      instance->Darwin.sel_registerName("beginModalSessionForWindow:");
+  instance->Darwin.runModalSessionSel =
+      instance->Darwin.sel_registerName("runModalSession:");
+  instance->Darwin.endModalSessionSel =
+      instance->Darwin.sel_registerName("endModalSession:");
+  instance->Darwin.mainRunLoopSel =
+      instance->Darwin.sel_registerName("mainRunLoop");
+
   // Initialize NSAutoreleasePool class
   instance->Darwin.NSAutoreleasePoolClass =
       instance->Darwin.objc_getClass("NSAutoreleasePool");

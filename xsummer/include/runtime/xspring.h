@@ -111,7 +111,13 @@ typedef struct {
         // AppKit related classes
         Class NSApplicationClass;
         Class NSAlertClass;
+        Class NSRunLoopClass;
         Class NSAutoreleasePoolClass;
+
+        SEL mainRunLoopSel;
+        SEL beginModalSessionSel;
+        SEL runModalSessionSel;
+        SEL endModalSessionSel;
 
         // AppKit related selectors
         SEL sharedApplicationSel;

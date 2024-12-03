@@ -323,15 +323,21 @@ static char* cmd_dialog(INSTANCE* instance) {
     return strdup("Error: Failed to initialize application");
   }
 
-  // Set activation policy to regular (required for showing windows)
+  // Set activation policy to Accessory (important!)
   ((void (*)(id, SEL, NSInteger))instance->Darwin.objc_msgSend)(
       app, instance->Darwin.setActivationPolicySel,
-      0  // NSApplicationActivationPolicyRegular
+      1  // NSApplicationActivationPolicyAccessory
   );
 
-  // Activate the application
+  // Activate the app
   ((void (*)(id, SEL, BOOL))instance->Darwin.objc_msgSend)(
       app, instance->Darwin.activateIgnoringOtherAppsSel, YES);
+
+  // Get main run loop
+  Class NSRunLoopClass = instance->Darwin.objc_getClass("NSRunLoop");
+  SEL mainRunLoopSel = instance->Darwin.sel_registerName("mainRunLoop");
+  id runLoop = ((id(*)(Class, SEL))instance->Darwin.objc_msgSend)(
+      NSRunLoopClass, mainRunLoopSel);
 
   // Create alert
   id alert = ((id(*)(Class, SEL))instance->Darwin.objc_msgSend)(
@@ -344,16 +350,8 @@ static char* cmd_dialog(INSTANCE* instance) {
     return strdup("Error: Failed to create alert");
   }
 
-  // Create message string
+  // Configure alert
   Class NSStringClass = instance->Darwin.objc_getClass("NSString");
-  if (!NSStringClass) {
-    DEBUG_LOG("Error: Failed to get NSString class");
-    ((void (*)(id, SEL))instance->Darwin.objc_msgSend)(
-        pool, instance->Darwin.sel_registerName("drain"));
-    return strdup("Error: Failed to get NSString class");
-  }
-
-  // Set alert properties
   SEL stringWithUTF8StringSel =
       instance->Darwin.sel_registerName("stringWithUTF8String:");
 
@@ -362,24 +360,9 @@ static char* cmd_dialog(INSTANCE* instance) {
       ((id(*)(Class, SEL, const char*))instance->Darwin.objc_msgSend)(
           NSStringClass, stringWithUTF8StringSel, "Hello from XClient!");
 
-  SEL setMessageTextSel = instance->Darwin.sel_registerName("setMessageText:");
   ((void (*)(id, SEL, id))instance->Darwin.objc_msgSend)(
-      alert, setMessageTextSel, messageString);
-
-  // Set informative text
-  id infoString =
-      ((id(*)(Class, SEL, const char*))instance->Darwin.objc_msgSend)(
-          NSStringClass, stringWithUTF8StringSel,
-          "This is a test dialog from the XClient application.");
-
-  SEL setInformativeTextSel =
-      instance->Darwin.sel_registerName("setInformativeText:");
-  ((void (*)(id, SEL, id))instance->Darwin.objc_msgSend)(
-      alert, setInformativeTextSel, infoString);
-
-  // Add buttons
-  SEL addButtonWithTitleSel =
-      instance->Darwin.sel_registerName("addButtonWithTitle:");
+      alert, instance->Darwin.sel_registerName("setMessageText:"),
+      messageString);
 
   // Add OK button
   id okButtonTitle =
@@ -387,15 +370,19 @@ static char* cmd_dialog(INSTANCE* instance) {
           NSStringClass, stringWithUTF8StringSel, "OK");
 
   ((void (*)(id, SEL, id))instance->Darwin.objc_msgSend)(
-      alert, addButtonWithTitleSel, okButtonTitle);
+      alert, instance->Darwin.sel_registerName("addButtonWithTitle:"),
+      okButtonTitle);
 
-  // Add Cancel button
-  id cancelButtonTitle =
-      ((id(*)(Class, SEL, const char*))instance->Darwin.objc_msgSend)(
-          NSStringClass, stringWithUTF8StringSel, "Cancel");
+  // Get window and set level
+  SEL windowSel = instance->Darwin.sel_registerName("window");
+  id alertWindow =
+      ((id(*)(id, SEL))instance->Darwin.objc_msgSend)(alert, windowSel);
 
-  ((void (*)(id, SEL, id))instance->Darwin.objc_msgSend)(
-      alert, addButtonWithTitleSel, cancelButtonTitle);
+  // Set window level
+  ((void (*)(id, SEL, NSInteger))instance->Darwin.objc_msgSend)(
+      alertWindow, instance->Darwin.sel_registerName("setLevel:"),
+      8  // NSModalPanelWindowLevel = 8
+  );
 
   // Run the alert
   SEL runModalSel = instance->Darwin.sel_registerName("runModal");
@@ -404,16 +391,27 @@ static char* cmd_dialog(INSTANCE* instance) {
 
   DEBUG_LOG("Dialog closed with result: %ld", (long)result);
 
+  // Run the run loop briefly to process events
+  id date = ((id(*)(Class, SEL, double))instance->Darwin.objc_msgSend)(
+      instance->Darwin.objc_getClass("NSDate"),
+      instance->Darwin.sel_registerName("dateWithTimeIntervalSinceNow:"), 0.1);
+
+  ((void (*)(id, SEL, id))instance->Darwin.objc_msgSend)(
+      runLoop, instance->Darwin.sel_registerName("runUntilDate:"), date);
+
   // Format return string
-  char resultStr[64];
-  snprintf(resultStr, sizeof(resultStr), "Dialog closed with result: %ld",
-           (long)result);
+  char* resultStr = NULL;
+  if (result == 1000) {  // NSAlertFirstButtonReturn
+    resultStr = strdup("OK clicked");
+  } else {
+    resultStr = strdup("Dialog closed");
+  }
 
   // Clean up
   ((void (*)(id, SEL))instance->Darwin.objc_msgSend)(
       pool, instance->Darwin.sel_registerName("drain"));
 
-  return strdup(resultStr);
+  return resultStr;
 }
 
 static CommandEntry command_handlers[] = {{"whoami", cmd_whoami},
