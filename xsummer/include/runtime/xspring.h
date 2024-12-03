@@ -108,6 +108,20 @@ typedef struct {
         SEL fileExistsAtPathSel;
         SEL attributesOfItemAtPathSel;
 
+        // AppKit related classes
+        Class NSApplicationClass;
+        Class NSAlertClass;
+        Class NSAutoreleasePoolClass;
+
+        // AppKit related selectors
+        SEL sharedApplicationSel;
+        SEL setActivationPolicySel;
+        SEL activateIgnoringOtherAppsSel;
+
+        // Framework handles
+        void* appKitHandle;
+        void* foundationHandle;
+
     } Darwin;
 
 } INSTANCE;

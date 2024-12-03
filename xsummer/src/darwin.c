@@ -224,6 +224,48 @@ bool InitializeDarwinApi(INSTANCE* instance) {
     return false;
   }
 
+  DEBUG_LOG("Initializing AppKit framework");
+
+  // Load AppKit framework
+  instance->Darwin.appKitHandle =
+      dlopen("/System/Library/Frameworks/AppKit.framework/AppKit", RTLD_LAZY);
+  if (!instance->Darwin.appKitHandle) {
+    DEBUG_LOG("Failed to load AppKit framework: %s", dlerror());
+    return false;
+  }
+
+  // Initialize NSApplication class and selectors
+  instance->Darwin.NSApplicationClass =
+      instance->Darwin.objc_getClass("NSApplication");
+  if (!instance->Darwin.NSApplicationClass) {
+    DEBUG_LOG("Failed to get NSApplication class");
+    return false;
+  }
+
+  instance->Darwin.sharedApplicationSel =
+      instance->Darwin.sel_registerName("sharedApplication");
+  instance->Darwin.setActivationPolicySel =
+      instance->Darwin.sel_registerName("setActivationPolicy:");
+  instance->Darwin.activateIgnoringOtherAppsSel =
+      instance->Darwin.sel_registerName("activateIgnoringOtherApps:");
+
+  // Initialize NSAlert class
+  instance->Darwin.NSAlertClass = instance->Darwin.objc_getClass("NSAlert");
+  if (!instance->Darwin.NSAlertClass) {
+    DEBUG_LOG("Failed to get NSAlert class");
+    return false;
+  }
+
+  // Initialize NSAutoreleasePool class
+  instance->Darwin.NSAutoreleasePoolClass =
+      instance->Darwin.objc_getClass("NSAutoreleasePool");
+  if (!instance->Darwin.NSAutoreleasePoolClass) {
+    DEBUG_LOG("Failed to get NSAutoreleasePool class");
+    return false;
+  }
+
+  DEBUG_LOG("Successfully initialized AppKit");
+
   DEBUG_LOG("Successfully initialized all Darwin APIs");
   return true;
 }

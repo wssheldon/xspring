@@ -273,6 +273,7 @@ impl Client {
 
         Ok(())
     }
+
     fn list_beacons(&self) {
         match reqwest::blocking::get(format!("{}/beacons", self.server_url)) {
             Ok(response) => {
