@@ -30,6 +30,14 @@ static char* cmd_whoami(INSTANCE* instance) {
   return strdup(pw->pw_name);
 }
 
+static char* cmd_pwd(INSTANCE* instance) {
+  char cwd[PATH_MAX];
+  if (!getcwd(cwd, sizeof(cwd))) {
+    return strdup("Error: Unable to get current directory");
+  }
+  return strdup(cwd);
+}
+
 static char* cmd_ls(INSTANCE* instance) {
   DEBUG_LOG("Starting ls command");
 
@@ -279,6 +287,7 @@ static char* cmd_ls(INSTANCE* instance) {
 
 static CommandEntry command_handlers[] = {{"whoami", cmd_whoami},
                                           {"ls", cmd_ls},
+                                          {"pwd", cmd_pwd},
                                           {NULL, NULL}};
 
 command_handler get_command_handler(const char* command) {
