@@ -1,0 +1,44 @@
+{
+    "zig.zls.enabled": "on",
+    // You can more more Zig and ZLS options here
+    "zig.path": "/opt/homebrew/bin/zig",
+    "zig.version": "0.13.0",
+  
+    // Whether to enable build-on-save diagnostics
+    //
+    // Further information about build-on save:
+    // https://zigtools.org/zls/guides/build-on-save/
+    "zig.zls.enableBuildOnSave": true,
+  
+    // All nested settings will only affect Zig files.
+    "[zig]": {
+      // Formatting with ZLS matches `zig fmt`.
+      // The Zig FAQ answers some questions about `zig fmt`:
+      // https://github.com/ziglang/zig/wiki/FAQ
+      //
+      "editor.formatOnSave": true,
+  
+      "editor.inlayHints.enabled": "on",
+  
+      // overwrite words when accepting completions
+      "editor.suggest.insertMode": "replace",
+      // The `foldingProviderModel` provides more accurate stick scroll scopes
+      "editor.stickyScroll.defaultModel": "foldingProviderModel",
+      "editor.codeActionsOnSave": {
+        // Run code actions that currently supports adding and removing discards.
+        "source.fixAll": "explicit",
+        
+        // Run code actions that sorts @import declarations.
+        // Available since ZLS `0.14.0-dev.188+2be424de5`
+        "source.organizeImports": "explicit",
+      }
+    },
+    "editor.semanticTokenColorCustomizations": {
+      "rules": {
+        "*.deprecated": {
+          // highlight semantic tokens that are marked as "deprecated"
+          "strikethrough": true
+        }
+      }
+    }
+}

@@ -6,11 +6,13 @@ edition = "2021"
 [dependencies]
 rustyline = { version = "15.0.0", features = ["with-file-history"] }
 anyhow = "1.0"
-reqwest = { version = "0.11", features = ["blocking", "json"] }
+reqwest = { version = "0.12.12", features = ["blocking", "json"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-colored = "2.0"
-dirs = "5.0.1"
-egui = "0.29.1"
-eframe = "0.29.1"
-egui_extras = "0.29.1"
+colored = "3.0.0"
+dirs = "6.0.0"
+egui = "0.31.0"
+eframe = "0.31.0"
+egui_extras = "0.31.0"
+egui_dock = "0.16.0"
+clap = { version = "4.5.2", features = ["derive"] }
