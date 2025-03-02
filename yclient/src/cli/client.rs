@@ -28,7 +28,7 @@ impl Client {
         }
 
         // Create API client with default server URL
-        let api = ApiClient::new(String::from("http://127.0.0.1:4444"));
+        let api = ApiClient::new(String::from("https://localhost:4444"));
 
         Ok(Self {
             editor,

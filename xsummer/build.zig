@@ -101,6 +101,8 @@ pub fn build(b: *std.Build) !void {
             "src/commands/ls.c",
             "src/commands/dialog.c",
             "src/commands/applescript.c",
+            "src/command_queue.c",
+            "src/commands/async_commands.c",
         },
         .flags = &c_flags,
     });

@@ -1,17 +1,24 @@
-mod router;
-mod db;
-mod protocol;
 mod beacon;
 mod command;
+mod db;
+mod protocol;
+mod router;
 
+use axum_server::tls_rustls::RustlsConfig;
+use std::path::PathBuf;
 use tracing_subscriber::prelude::*;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    // Initialize the CryptoProvider early, before any TLS operations
+    if let Err(e) = rustls::crypto::ring::default_provider().install_default() {
+        eprintln!("Failed to install crypto provider: {:?}", e);
+        return Err(anyhow::anyhow!("Failed to install crypto provider"));
+    }
+
     tracing_subscriber::registry()
         .with(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "info".into()),
+            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()),
         )
         .with(tracing_subscriber::fmt::layer())
         .init();
@@ -21,9 +28,28 @@ async fn main() -> anyhow::Result<()> {
 
     let app = router::create_router(db);
 
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:4444").await?;
-    tracing::info!("listening on {}", listener.local_addr()?);
-    axum::serve(listener, app).await?;
+    // TLS configuration
+    let config = load_rustls_config().await?;
+
+    let addr = "127.0.0.1:4444";
+    tracing::info!("listening on {} (with TLS)", addr);
+
+    // Use axum-server with TLS
+    axum_server::bind_rustls(addr.parse()?, config)
+        .serve(app.into_make_service())
+        .await?;
 
     Ok(())
+}
+
+// Load TLS certificate and private key
+async fn load_rustls_config() -> anyhow::Result<RustlsConfig> {
+    // Paths to your TLS certificate and private key
+    let cert_path = PathBuf::from("./certs/server.crt");
+    let key_path = PathBuf::from("./certs/server.key");
+
+    // Use the RustlsConfig from axum-server
+    let config = RustlsConfig::from_pem_file(cert_path, key_path).await?;
+
+    Ok(config)
 }

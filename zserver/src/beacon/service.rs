@@ -1,6 +1,6 @@
-use sqlx::SqlitePool;
-use crate::protocol::message::ProtocolMessage;
 use super::model::Beacon;
+use crate::protocol::message::ProtocolMessage;
+use sqlx::SqlitePool;
 
 pub struct BeaconService {
     db: SqlitePool,
@@ -20,7 +20,7 @@ impl BeaconService {
              status = 'active',
              hostname = excluded.hostname,
              username = excluded.username,
-             os_version = excluded.os_version"
+             os_version = excluded.os_version",
         )
         .bind(&beacon.id)
         .bind(&beacon.hostname)
@@ -36,7 +36,7 @@ impl BeaconService {
         sqlx::query(
             "UPDATE beacons
              SET last_seen = datetime('now'), status = 'active'
-             WHERE id = ?"
+             WHERE id = ?",
         )
         .bind(client_id)
         .execute(&self.db)
@@ -55,8 +55,7 @@ impl BeaconService {
               username,
               os_version
              FROM beacons
-             WHERE last_seen > datetime('now', '-5 minutes')
-             ORDER BY last_seen DESC"
+             ORDER BY last_seen DESC",
         )
         .fetch_all(&self.db)
         .await

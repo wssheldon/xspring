@@ -33,8 +33,11 @@ impl GuiClient {
 
         let client = Self {
             beacons: Arc::new(Mutex::new(Vec::new())),
-            server_url: String::from("http://127.0.0.1:4444"),
-            reqwest_client: ReqwestClient::new(),
+            server_url: String::from("https://localhost:4444"),
+            reqwest_client: ReqwestClient::builder()
+                .danger_accept_invalid_certs(true)
+                .build()
+                .unwrap_or_default(),
 
             // Initialize with empty sessions
             active_sessions: Vec::new(),
@@ -48,7 +51,10 @@ impl GuiClient {
         let beacons = client.beacons.clone();
         let server_url = client.server_url.clone();
         thread::spawn(move || {
-            let poll_client = ReqwestClient::new();
+            let poll_client = ReqwestClient::builder()
+                .danger_accept_invalid_certs(true)
+                .build()
+                .unwrap_or_default();
             loop {
                 if let Ok(response) = poll_client.get(format!("{}/beacons", server_url)).send() {
                     if response.status().is_success() {

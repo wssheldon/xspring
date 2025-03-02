@@ -14,7 +14,10 @@ impl ApiClient {
     /// Create a new API client with the specified base URL
     pub fn new(base_url: String) -> Self {
         Self {
-            client: Client::new(),
+            client: Client::builder()
+                .danger_accept_invalid_certs(true)
+                .build()
+                .unwrap_or_default(),
             base_url,
         }
     }
