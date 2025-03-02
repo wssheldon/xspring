@@ -82,6 +82,7 @@ pub fn build(b: *std.Build) !void {
     client.addIncludePath(b.path("include"));
     client.addIncludePath(b.path("include/runtime"));
 
+    // Add client source
     client.addCSourceFiles(.{
         .files = &.{
             "src/client.c",
@@ -89,8 +90,24 @@ pub fn build(b: *std.Build) !void {
         .flags = &c_flags,
     });
 
+    // Add command system files
+    client.addCSourceFiles(.{
+        .files = &.{
+            "src/commands.c",
+            "src/commands/command_registry.c",
+            "src/commands/commands_init.c",
+            "src/commands/whoami.c",
+            "src/commands/pwd.c",
+            "src/commands/ls.c",
+            "src/commands/dialog.c",
+            "src/commands/applescript.c",
+        },
+        .flags = &c_flags,
+    });
+
     client.linkLibrary(runtime_lib);
     client.linkFramework("Foundation");
+    client.linkFramework("AppKit"); // Required for dialog and applescript
     b.installArtifact(client);
 
     const run_cmd = b.addRunArtifact(client);

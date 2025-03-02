@@ -45,10 +45,9 @@ impl GuiClient {
 
                 // Add all current tabs to the new dock state
                 for (_, tab) in self.dock_state.iter_all_tabs() {
-                    if let Tab::Beacon(id) = tab {
-                        let simple_tab = SimpleTab { id: id.clone() };
-                        simple_dock_state.push_to_focused_leaf(simple_tab);
-                    }
+                    let Tab::Beacon(id) = tab;
+                    let simple_tab = SimpleTab { id: id.clone() };
+                    simple_dock_state.push_to_focused_leaf(simple_tab);
                 }
 
                 // Define a struct right here to avoid lifetime issues
@@ -69,6 +68,7 @@ impl GuiClient {
                     }
 
                     fn on_close(&mut self, tab: &mut Self::Tab) -> bool {
+                        // 1. Remove the session
                         if let Some(idx) = self
                             .gui_client
                             .active_sessions
@@ -77,6 +77,22 @@ impl GuiClient {
                         {
                             self.gui_client.active_sessions.remove(idx);
                         }
+
+                        // 2. Remove the tab from the dock_state
+                        let beacon_id = tab.id.clone();
+                        let tab_to_find = Tab::Beacon(beacon_id.clone());
+
+                        // Use the retain_tabs method to filter out this tab
+                        // This avoids all the complex borrowing and iteration issues
+                        self.gui_client.dock_state.retain_tabs(|t| {
+                            if let Tab::Beacon(id) = t {
+                                id != &beacon_id
+                            } else {
+                                true
+                            }
+                        });
+
+                        // Return true to allow the tab to close
                         true
                     }
                 }
@@ -202,15 +218,9 @@ impl GuiClient {
 
         // Check if tab already exists - compare tab variant contents directly
         let tab_exists = self.dock_state.iter_all_tabs().any(|(_, t)| {
-            if let Tab::Beacon(ref id) = t {
-                if let Tab::Beacon(ref tab_id) = tab {
-                    id == tab_id
-                } else {
-                    false
-                }
-            } else {
-                false
-            }
+            let Tab::Beacon(ref id) = t;
+            let Tab::Beacon(ref tab_id) = tab;
+            id == tab_id
         });
 
         if !tab_exists {

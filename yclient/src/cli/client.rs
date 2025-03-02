@@ -1,14 +1,17 @@
-use crate::models::{Command, NewCommand};
+use crate::utils::{ApiClient, Result};
 use colored::*;
 use rustyline::error::ReadlineError;
-use rustyline::{DefaultEditor, Result};
+use rustyline::DefaultEditor;
 use std::path::PathBuf;
 
 /// Terminal-based client for interaction with the server
 pub struct Client {
+    /// API client for server communication
+    api: ApiClient,
+    /// Command line editor for user input
     editor: DefaultEditor,
+    /// Path to command history file
     history_path: PathBuf,
-    server_url: String,
 }
 
 impl Client {
@@ -24,11 +27,20 @@ impl Client {
             println!("{}", "No previous history.".yellow());
         }
 
+        // Create API client with default server URL
+        let api = ApiClient::new(String::from("http://127.0.0.1:4444"));
+
         Ok(Self {
             editor,
             history_path,
-            server_url: String::from("http://127.0.0.1:4444"),
+            api,
         })
+    }
+
+    /// Create a new client with a custom server URL
+    pub fn with_server_url(mut self, server_url: String) -> Self {
+        self.api = self.api.with_base_url(server_url);
+        self
     }
 
     /// Print available commands
@@ -67,11 +79,11 @@ impl Client {
                 true
             }
             Some("ping") => {
-                self.send_ping();
+                self.handle_ping();
                 true
             }
             Some("beacons") => {
-                self.list_beacons();
+                self.handle_list_beacons();
                 true
             }
             Some("run") => {
@@ -80,7 +92,7 @@ impl Client {
                 } else {
                     let beacon_id = parts[1];
                     let command = parts[2..].join(" ");
-                    self.send_command(beacon_id, &command);
+                    self.handle_send_command(beacon_id, &command);
                 }
                 true
             }
@@ -88,7 +100,7 @@ impl Client {
                 if parts.len() != 2 {
                     println!("{}", "Usage: commands <beacon_id>".red());
                 } else {
-                    self.list_commands(parts[1]);
+                    self.handle_list_commands(parts[1]);
                 }
                 true
             }
@@ -101,121 +113,106 @@ impl Client {
         }
     }
 
-    /// Send a command to a beacon
-    pub fn send_command(&self, beacon_id: &str, command: &str) {
-        let new_command = NewCommand {
-            beacon_id: beacon_id.to_string(),
-            command: command.to_string(),
-        };
-
-        match reqwest::blocking::Client::new()
-            .post(format!("{}/command/new", self.server_url))
-            .json(&new_command)
-            .send()
-        {
+    /// Handle the ping command
+    fn handle_ping(&self) {
+        match self.api.ping() {
             Ok(response) => {
-                if response.status().is_success() {
-                    match response.json::<Command>() {
-                        Ok(cmd) => {
-                            println!(
-                                "{} Command {} scheduled for beacon {}",
-                                "Success:".green(),
-                                cmd.id.to_string().yellow(),
-                                cmd.beacon_id.cyan()
-                            );
-                        }
-                        Err(e) => println!("{} {}", "Failed to parse response:".red(), e),
-                    }
-                } else {
-                    println!(
-                        "{} {} ({})",
-                        "Server error:".red(),
-                        response.status(),
-                        response.status().as_str()
-                    );
-                }
+                println!("{} {}", "Server response:".green(), response);
             }
-            Err(e) => println!("{} {}", "Failed to send command:".red(), e),
+            Err(e) => {
+                println!("{} {}", "Error:".red(), e);
+            }
         }
     }
 
-    /// List commands for a beacon
-    pub fn list_commands(&self, beacon_id: &str) {
-        match reqwest::blocking::get(format!("{}/command/list/{}", self.server_url, beacon_id)) {
-            Ok(response) => {
-                if response.status().is_success() {
-                    match response.json::<Vec<Command>>() {
-                        Ok(commands) => {
-                            if commands.is_empty() {
-                                println!(
-                                    "\n{} No commands found for beacon {}",
-                                    "Info:".blue(),
-                                    beacon_id
-                                );
-                            } else {
-                                println!(
-                                    "\n{} for beacon {}:",
-                                    "Commands".green().bold(),
-                                    beacon_id.cyan()
-                                );
-                                println!("{:-<80}", "");
-                                for cmd in commands {
-                                    println!(
-                                        "ID: {} | Status: {} | Created: {}",
-                                        cmd.id.to_string().yellow(),
-                                        cmd.status.green(),
-                                        cmd.created_at.blue()
-                                    );
-                                    println!("Command: {}", cmd.command);
-                                    if let Some(result) = cmd.result {
-                                        println!("Result: {}", result.green());
-                                    }
-                                    if let Some(completed_at) = cmd.completed_at {
-                                        println!("Completed: {}", completed_at.blue());
-                                    }
-                                    println!("{:-<80}", "");
-                                }
-                            }
-                            println!();
-                        }
-                        Err(e) => println!("{} {}", "Failed to parse commands:".red(), e),
-                    }
-                } else {
+    /// Handle the beacons command
+    fn handle_list_beacons(&self) {
+        match self.api.get_beacons() {
+            Ok(beacons) => {
+                println!("\n{}", "Active Beacons:".green().bold());
+                println!("{:-<80}", "");
+                for beacon in beacons {
                     println!(
-                        "{} {} ({})",
-                        "Server error:".red(),
-                        response.status(),
-                        response.status().as_str()
+                        "{}: {} ({})",
+                        beacon.id.cyan(),
+                        beacon.last_seen.yellow(),
+                        beacon.status.green()
                     );
+                    if let Some(hostname) = &beacon.hostname {
+                        println!("  Hostname: {}", hostname.blue());
+                    }
+                    if let Some(username) = &beacon.username {
+                        println!("  User: {}", username.blue());
+                    }
+                    if let Some(os_version) = &beacon.os_version {
+                        println!("  OS: {}", os_version.blue());
+                    }
+                    println!("{:-<80}", "");
                 }
+                println!();
             }
-            Err(e) => println!("{} {}", "Failed to fetch commands:".red(), e),
+            Err(e) => {
+                println!("{} {}", "Failed to fetch beacons:".red(), e);
+            }
         }
     }
 
-    /// Send a ping to the server
-    pub fn send_ping(&self) {
-        match reqwest::blocking::Client::new()
-            .post(&self.server_url)
-            .body(format!("PING client"))
-            .send()
-        {
-            Ok(response) => {
-                if response.status().is_success() {
-                    match response.text() {
-                        Ok(text) => println!("{} {}", "Server response:".green(), text),
-                        Err(e) => println!("{} {}", "Failed to read response:".red(), e),
-                    }
+    /// Handle the send command operation
+    fn handle_send_command(&self, beacon_id: &str, command: &str) {
+        match self.api.send_command(beacon_id, command) {
+            Ok(cmd) => {
+                println!(
+                    "{} Command {} scheduled for beacon {}",
+                    "Success:".green(),
+                    cmd.id.to_string().yellow(),
+                    cmd.beacon_id.cyan()
+                );
+            }
+            Err(e) => {
+                println!("{} {}", "Failed to send command:".red(), e);
+            }
+        }
+    }
+
+    /// Handle the list commands operation
+    fn handle_list_commands(&self, beacon_id: &str) {
+        match self.api.list_commands(beacon_id) {
+            Ok(commands) => {
+                if commands.is_empty() {
+                    println!(
+                        "\n{} No commands found for beacon {}",
+                        "Info:".blue(),
+                        beacon_id
+                    );
                 } else {
                     println!(
-                        "{} {} ({})",
-                        "Server error:".red(),
-                        response.status(),
-                        response.status().as_str()
+                        "\n{} for beacon {}:",
+                        "Commands".green().bold(),
+                        beacon_id.cyan()
                     );
+                    println!("{:-<80}", "");
+                    for cmd in commands {
+                        println!(
+                            "ID: {} | Status: {} | Created: {}",
+                            cmd.id.to_string().yellow(),
+                            cmd.status.green(),
+                            cmd.created_at.blue()
+                        );
+                        println!("Command: {}", cmd.command);
+                        if let Some(result) = cmd.result {
+                            println!("Result: {}", result.green());
+                        }
+                        if let Some(completed_at) = cmd.completed_at {
+                            println!("Completed: {}", completed_at.blue());
+                        }
+                        println!("{:-<80}", "");
+                    }
                 }
+                println!();
             }
-            Err(e) => println!("{} {}", "Failed to send request:".red(), e),
+            Err(e) => {
+                println!("{} {}", "Failed to fetch commands:".red(), e);
+            }
         }
     }
 
@@ -254,49 +251,5 @@ impl Client {
         }
 
         Ok(())
-    }
-
-    /// List active beacons
-    pub fn list_beacons(&self) {
-        match reqwest::blocking::get(format!("{}/beacons", self.server_url)) {
-            Ok(response) => {
-                if response.status().is_success() {
-                    match response.json::<Vec<crate::models::Beacon>>() {
-                        Ok(beacons) => {
-                            println!("\n{}", "Active Beacons:".green().bold());
-                            println!("{:-<80}", "");
-                            for beacon in beacons {
-                                println!(
-                                    "{}: {} ({})",
-                                    beacon.id.cyan(),
-                                    beacon.last_seen.yellow(),
-                                    beacon.status.green()
-                                );
-                                if let Some(hostname) = beacon.hostname {
-                                    println!("  Hostname: {}", hostname.blue());
-                                }
-                                if let Some(username) = beacon.username {
-                                    println!("  User: {}", username.blue());
-                                }
-                                if let Some(os_version) = beacon.os_version {
-                                    println!("  OS: {}", os_version.blue());
-                                }
-                                println!("{:-<80}", "");
-                            }
-                            println!();
-                        }
-                        Err(e) => println!("{} {}", "Failed to parse beacons:".red(), e),
-                    }
-                } else {
-                    println!(
-                        "{} {} ({})",
-                        "Server error:".red(),
-                        response.status(),
-                        response.status().as_str()
-                    );
-                }
-            }
-            Err(e) => println!("{} {}", "Failed to fetch beacons:".red(), e),
-        }
     }
 }

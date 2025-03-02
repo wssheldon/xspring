@@ -1,7 +1,6 @@
 use crate::models::{Beacon, BeaconSession, Command, NewCommand, Tab, View};
 use crate::utils::formatter::format_ls_output;
 use eframe::egui;
-use egui::Color32;
 use egui_dock::DockState;
 use reqwest::blocking::Client as ReqwestClient;
 use std::sync::{Arc, Mutex};

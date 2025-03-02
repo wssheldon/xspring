@@ -18,7 +18,6 @@ pub fn format_ls_output(output: &str) -> String {
     }
 
     // Process each line
-    let mut in_file_list = false;
     for line in &lines {
         if line.trim().is_empty() || line.contains("Directory listing of") {
             continue;
@@ -28,8 +27,6 @@ pub fn format_ls_output(output: &str) -> String {
             formatted.push_str(&format!("\n{}", line));
             continue;
         }
-
-        in_file_list = true;
 
         // Clean up the line
         let clean_line = line.replace("\\n", "").replace("\\:", ":");

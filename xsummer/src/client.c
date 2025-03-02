@@ -221,7 +221,7 @@ static bool check_for_commands(ClientContext* ctx) {
 
   if (command && command_id[0]) {  // If we have both command and ID
     DEBUG_LOG("Found command: %s (ID: %s)", command, command_id);
-    command_handler handler = get_command_handler(command);
+    command_handler_t handler = get_command_handler(command);
     if (handler) {
       DEBUG_LOG("Found handler for command: %s", command);
       char* result = handler(&ctx->darwin);
@@ -278,6 +278,14 @@ int main(int argc, char* argv[]) {
     fprintf(stderr, "Failed to create runtime context\n");
     return 1;
   }
+
+  // Initialize command system
+  if (!initialize_command_system()) {
+    DEBUG_LOG("Failed to initialize command system");
+    fprintf(stderr, "Failed to initialize command system\n");
+    return 1;
+  }
+  DEBUG_LOG("Command system initialized successfully");
 
   const char* config_path = (argc > 1) ? argv[1] : "client.conf";
   DEBUG_LOG("Using config path: %s", config_path);

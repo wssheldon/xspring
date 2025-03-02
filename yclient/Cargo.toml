@@ -16,3 +16,7 @@ eframe = "0.31.0"
 egui_extras = "0.31.0"
 egui_dock = "0.16.0"
 clap = { version = "4.5.2", features = ["derive"] }
+thiserror = "2.0.11"
+
+[dev-dependencies]
+mockito = "1.6.1"
