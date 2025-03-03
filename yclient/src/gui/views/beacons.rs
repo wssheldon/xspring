@@ -3,6 +3,7 @@ use crate::models::{Tab, View};
 use egui::{Color32, Ui};
 use egui_dock::{DockArea, DockState, Style, TabViewer};
 use egui_extras::{Column, TableBuilder};
+use egui_phosphor::regular;
 
 // Define SimpleTab struct locally to avoid borrowing issues
 #[derive(Clone)]
@@ -197,7 +198,10 @@ impl GuiClient {
             if beacons.is_empty() {
                 ui.vertical_centered(|ui| {
                     ui.add_space(20.0);
-                    ui.label("⚠ No agents connected");
+                    ui.label(
+                        egui::RichText::new(format!("{} No agents connected", regular::WARNING))
+                            .color(Color32::YELLOW),
+                    );
                     ui.add_space(10.0);
                 });
                 return;
@@ -211,6 +215,7 @@ impl GuiClient {
                 .striped(true)
                 .resizable(true)
                 .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
+                .column(Column::auto().at_least(30.0)) // OS icon column
                 .column(Column::auto().at_least(100.0).resizable(true)) // ID
                 .column(Column::auto().at_least(80.0).resizable(true)) // Status
                 .column(Column::auto().at_least(120.0).resizable(true)) // Hostname
@@ -221,22 +226,31 @@ impl GuiClient {
             table
                 .header(20.0, |mut header| {
                     header.col(|ui| {
-                        ui.strong("ID");
+                        ui.label(""); // Empty header for OS icon
                     });
                     header.col(|ui| {
-                        ui.strong("Status");
+                        ui.label(egui::RichText::new(format!(
+                            "{} ID",
+                            regular::IDENTIFICATION_BADGE
+                        )));
                     });
                     header.col(|ui| {
-                        ui.strong("Hostname");
+                        ui.label(egui::RichText::new(format!("{} Status", regular::ACTIVITY)));
                     });
                     header.col(|ui| {
-                        ui.strong("Username");
+                        ui.label(egui::RichText::new(format!(
+                            "{} Hostname",
+                            regular::DESKTOP
+                        )));
                     });
                     header.col(|ui| {
-                        ui.strong("OS Version");
+                        ui.label(egui::RichText::new(format!("{} User", regular::USER)));
                     });
                     header.col(|ui| {
-                        ui.strong("Last Seen");
+                        ui.label(egui::RichText::new(format!("{} OS", regular::GEAR)));
+                    });
+                    header.col(|ui| {
+                        ui.label(egui::RichText::new(format!("{} Last Seen", regular::CLOCK)));
                     });
                 })
                 .body(|mut body| {
@@ -247,13 +261,26 @@ impl GuiClient {
                             .active_sessions
                             .iter()
                             .any(|s| s.beacon_id == beacon.id);
-                        let beacon_id = beacon.id.clone(); // Clone for the closure
+                        let beacon_id = beacon.id.clone();
 
                         body.row(row_height, |mut row| {
+                            // OS icon column
                             row.col(|ui| {
-                                let response = ui.selectable_label(is_active, &beacon_id);
+                                ui.label(egui::RichText::new(regular::APPLE_LOGO).size(16.0));
+                            });
+
+                            // ID column with selectable and context menu
+                            row.col(|ui| {
+                                let response = ui.selectable_label(
+                                    is_active,
+                                    egui::RichText::new(&beacon_id).color(if is_active {
+                                        Color32::LIGHT_BLUE
+                                    } else {
+                                        ui.style().visuals.text_color()
+                                    }),
+                                );
+
                                 if response.clicked() {
-                                    // Store the beacon ID to open a tab later
                                     ui.ctx().data_mut(|data| {
                                         data.insert_temp(
                                             egui::Id::new("selected_beacon"),
@@ -262,9 +289,14 @@ impl GuiClient {
                                     });
                                 }
 
-                                // Add context menu to the row
                                 response.context_menu(|ui| {
-                                    if ui.button("Interact").clicked() {
+                                    if ui
+                                        .button(egui::RichText::new(format!(
+                                            "{} Interact",
+                                            regular::TERMINAL
+                                        )))
+                                        .clicked()
+                                    {
                                         ui.ctx().data_mut(|data| {
                                             data.insert_temp(
                                                 egui::Id::new("selected_beacon"),
@@ -276,38 +308,62 @@ impl GuiClient {
 
                                     ui.separator();
 
-                                    // Add delete option with red text
-                                    let delete_text = egui::RichText::new("Delete")
-                                        .color(egui::Color32::from_rgb(220, 50, 50));
-
-                                    if ui.button(delete_text).clicked() {
-                                        // Set state for delete confirmation modal by storing in context
+                                    if ui
+                                        .button(
+                                            egui::RichText::new(format!(
+                                                "{} Delete",
+                                                regular::TRASH
+                                            ))
+                                            .color(Color32::from_rgb(220, 50, 50)),
+                                        )
+                                        .clicked()
+                                    {
                                         ui.ctx().data_mut(|data| {
                                             data.insert_temp(
                                                 egui::Id::new("beacon_to_delete"),
                                                 beacon_id.clone(),
                                             )
                                         });
-
                                         ui.close_menu();
                                     }
                                 });
                             });
 
                             row.col(|ui| {
-                                ui.label(&beacon.status);
+                                let status_icon = if beacon.status == "active" {
+                                    regular::CHECK_CIRCLE
+                                } else {
+                                    regular::X_CIRCLE
+                                };
+                                ui.label(egui::RichText::new(format!(
+                                    "{} {}",
+                                    status_icon, beacon.status
+                                )));
                             });
+
                             row.col(|ui| {
-                                ui.label(beacon.hostname.as_deref().unwrap_or("N/A"));
+                                ui.label(egui::RichText::new(format!(
+                                    "{}",
+                                    beacon.hostname.as_deref().unwrap_or("N/A")
+                                )));
                             });
+
                             row.col(|ui| {
-                                ui.label(beacon.username.as_deref().unwrap_or("N/A"));
+                                ui.label(egui::RichText::new(format!(
+                                    "{}",
+                                    beacon.username.as_deref().unwrap_or("N/A")
+                                )));
                             });
+
                             row.col(|ui| {
-                                ui.label(beacon.os_version.as_deref().unwrap_or("N/A"));
+                                ui.label(egui::RichText::new(format!(
+                                    "{}",
+                                    beacon.os_version.as_deref().unwrap_or("N/A")
+                                )));
                             });
+
                             row.col(|ui| {
-                                ui.label(&beacon.last_seen);
+                                ui.label(egui::RichText::new(format!("{}", beacon.last_seen)));
                             });
                         });
                     }
@@ -320,7 +376,7 @@ impl GuiClient {
         // Create a new tab for this beacon if not already open
         let tab = Tab::Beacon(beacon_id.to_string());
 
-        // Check if tab already exists - compare tab variant contents directly
+        // Check if tab already exists
         let tab_exists = self.dock_state.iter_all_tabs().any(|(_, t)| {
             let Tab::Beacon(ref id) = t;
             let Tab::Beacon(ref tab_id) = tab;

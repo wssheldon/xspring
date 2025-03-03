@@ -45,20 +45,14 @@ impl Client {
 
     /// Print available commands
     pub fn print_help(&self) {
-        println!("\n{}", "Available Commands:".green().bold());
-        println!("  {} - Send ping to server", "ping".cyan());
-        println!("  {} - List active beacons", "beacons".cyan());
-        println!(
-            "  {} - Send command to beacon",
-            "run <beacon_id> <command>".cyan()
-        );
-        println!(
-            "  {} - List commands for beacon",
-            "commands <beacon_id>".cyan()
-        );
-        println!("  {} - Show this help message", "help".cyan());
-        println!("  {} - Clear the screen", "clear".cyan());
-        println!("  {} - Exit the client", "exit".cyan());
+        println!("\n{}", "Commands:".green().bold());
+        println!("{}-ping server", "ping".cyan());
+        println!("{}-list beacons", "beacons".cyan());
+        println!("{}-run command", "run <beacon_id> <command>".cyan());
+        println!("{}-list commands", "commands <beacon_id>".cyan());
+        println!("{}-help", "help".cyan());
+        println!("{}-clear", "clear".cyan());
+        println!("{}-exit", "exit".cyan());
         println!();
     }
 
@@ -130,29 +124,28 @@ impl Client {
         match self.api.get_beacons() {
             Ok(beacons) => {
                 println!("\n{}", "Active Beacons:".green().bold());
-                println!("{:-<80}", "");
                 for beacon in beacons {
                     println!(
-                        "{}: {} ({})",
+                        "{}:{}({})",
                         beacon.id.cyan(),
                         beacon.last_seen.yellow(),
                         beacon.status.green()
                     );
                     if let Some(hostname) = &beacon.hostname {
-                        println!("  Hostname: {}", hostname.blue());
+                        println!("Host:{}", hostname.blue());
                     }
                     if let Some(username) = &beacon.username {
-                        println!("  User: {}", username.blue());
+                        println!("User:{}", username.blue());
                     }
                     if let Some(os_version) = &beacon.os_version {
-                        println!("  OS: {}", os_version.blue());
+                        println!("OS:{}", os_version.blue());
                     }
-                    println!("{:-<80}", "");
+                    println!("-");
                 }
                 println!();
             }
             Err(e) => {
-                println!("{} {}", "Failed to fetch beacons:".red(), e);
+                println!("{}:{}", "Error".red(), e);
             }
         }
     }
@@ -180,49 +173,48 @@ impl Client {
             Ok(commands) => {
                 if commands.is_empty() {
                     println!(
-                        "\n{} No commands found for beacon {}",
+                        "\n{}No commands found for beacon{}",
                         "Info:".blue(),
                         beacon_id
                     );
                 } else {
                     println!(
-                        "\n{} for beacon {}:",
+                        "\n{}for beacon{}:",
                         "Commands".green().bold(),
                         beacon_id.cyan()
                     );
-                    println!("{:-<80}", "");
                     for cmd in commands {
                         println!(
-                            "ID: {} | Status: {} | Created: {}",
+                            "ID:{}|Status:{}|Created:{}",
                             cmd.id.to_string().yellow(),
                             cmd.status.green(),
                             cmd.created_at.blue()
                         );
-                        println!("Command: {}", cmd.command);
+                        println!("Cmd:{}", cmd.command);
                         if let Some(result) = cmd.result {
-                            println!("Result: {}", result.green());
+                            println!("Result:{}", result.green());
                         }
                         if let Some(completed_at) = cmd.completed_at {
-                            println!("Completed: {}", completed_at.blue());
+                            println!("Done:{}", completed_at.blue());
                         }
-                        println!("{:-<80}", "");
+                        println!("-");
                     }
                 }
                 println!();
             }
             Err(e) => {
-                println!("{} {}", "Failed to fetch commands:".red(), e);
+                println!("{}:{}", "Error".red(), e);
             }
         }
     }
 
     /// Run the CLI client
     pub fn run(&mut self) -> Result<()> {
-        println!("{}", "\nWelcome to XClient!".green().bold());
+        println!("\n{}", "Welcome to XClient!".green().bold());
         self.print_help();
 
         loop {
-            let prompt = format!("{} ", ">>".cyan().bold());
+            let prompt = ">".cyan().bold().to_string();
             match self.editor.readline(&prompt) {
                 Ok(line) => {
                     self.editor.add_history_entry(line.as_str())?;

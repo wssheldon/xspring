@@ -2,6 +2,7 @@ use crate::models::{Beacon, BeaconSession, Command, NewCommand, Tab, View};
 use crate::utils::formatter::format_ls_output;
 use eframe::egui;
 use egui_dock::DockState;
+use egui_phosphor::regular;
 use reqwest::blocking::Client as ReqwestClient;
 use serde_json;
 use std::collections::HashMap;
@@ -41,8 +42,9 @@ pub struct GuiClient {
 impl GuiClient {
     /// Create a new GUI client
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
-        // Customize fonts if needed
-        let fonts = egui::FontDefinitions::default();
+        // Initialize fonts with Phosphor icons
+        let mut fonts = egui::FontDefinitions::default();
+        egui_phosphor::add_to_fonts(&mut fonts, egui_phosphor::Variant::Regular);
         cc.egui_ctx.set_fonts(fonts);
 
         // Initialize dock state
@@ -115,79 +117,101 @@ impl GuiClient {
 
         let beacon_id = self.active_sessions[session_idx].beacon_id.clone();
 
-        // Use a single panel for the entire UI with vertical layout
-        egui::CentralPanel::default().show_inside(ui, |ui| {
-            // Add some margin at the top to separate from the tab bar
-            ui.add_space(4.0);
+        // Use TopBottomPanel for the terminal to ensure it's flush with edges
+        egui::TopBottomPanel::bottom("terminal_input")
+            .exact_height(ui.available_height())
+            .frame(
+                egui::Frame::none()
+                    .fill(egui::Color32::BLACK)
+                    .inner_margin(0.0)
+                    .outer_margin(0.0),
+            )
+            .show_inside(ui, |ui| {
+                // Set up layout for terminal: command history (scrollable) at top, input at bottom
+                ui.visuals_mut().override_text_color = Some(egui::Color32::WHITE);
+                ui.set_min_height(ui.available_height());
 
-            // Create a frame with black background for terminal-like appearance
-            egui::Frame::none()
-                .fill(egui::Color32::BLACK)
-                .inner_margin(8.0)
-                .show(ui, |ui| {
-                    // Set up layout for terminal: command history (scrollable) at top, input at bottom
-                    ui.visuals_mut().override_text_color = Some(egui::Color32::WHITE);
-                    ui.set_min_height(ui.available_height());
-
-                    // Use vertical layout to ensure command input stays at bottom
-                    ui.vertical(|ui| {
-                        // Use a ScrollArea for the command history to enable scrolling
-                        // This takes up most of the space and allows scrolling
-                        let available_height = ui.available_height() - 40.0; // Reserve space for input
-                        egui::ScrollArea::vertical()
-                            .auto_shrink([false; 2])
-                            .stick_to_bottom(true)
-                            .max_height(available_height)
-                            .show(ui, |ui| {
-                                // Render command history inside the scrollable area
-                                self.render_command_history(ui, session_idx);
-                            });
-
-                        // Add separator and space before the input
-                        ui.separator();
-                        ui.add_space(4.0);
-
-                        // Command input at the bottom
-                        ui.horizontal(|ui| {
-                            ui.label(
-                                egui::RichText::new("$ ").color(egui::Color32::from_rgb(0, 230, 0)),
-                            );
-                            let text_edit = egui::TextEdit::singleline(
-                                &mut self.active_sessions[session_idx].command_input,
-                            )
-                            .desired_width(ui.available_width())
-                            .hint_text("Enter command...")
-                            .font(egui::FontId::monospace(14.0));
-
-                            let response = ui.add(text_edit);
-
-                            if response.lost_focus()
-                                && ui.input(|i| i.key_pressed(egui::Key::Enter))
-                            {
-                                self.send_command(&beacon_id);
-                                // Force a repaint to update the UI immediately
-                                ui.ctx().request_repaint();
-                            }
+                // Use vertical layout to ensure command input stays at bottom
+                ui.vertical(|ui| {
+                    // Use a ScrollArea for the command history to enable scrolling
+                    let available_height = ui.available_height() - 32.0; // Increased space for input to prevent border cutoff
+                    egui::ScrollArea::vertical()
+                        .auto_shrink([false; 2])
+                        .stick_to_bottom(true)
+                        .max_height(available_height)
+                        .show(ui, |ui| {
+                            // Render command history inside the scrollable area
+                            self.render_command_history(ui, session_idx);
                         });
+
+                    // Add a small space before the input area
+                    ui.add_space(2.0);
+
+                    // Command input at the bottom - more compact
+                    ui.horizontal(|ui| {
+                        // Add small left margin
+                        ui.add_space(8.0);
+
+                        // Command input with proper right margin for send button
+                        let text_edit = egui::TextEdit::singleline(
+                            &mut self.active_sessions[session_idx].command_input,
+                        )
+                        .desired_width(ui.available_width() - 70.0) // Reserve space for send button
+                        .hint_text(
+                            egui::RichText::new("Enter command...")
+                                .color(egui::Color32::from_gray(128)),
+                        )
+                        .margin(egui::vec2(4.0, 4.0))
+                        .font(egui::FontId::monospace(14.0))
+                        .text_color(egui::Color32::WHITE);
+
+                        let response = ui.add(text_edit);
+                        let mut should_send =
+                            response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+
+                        // Add small space between input and button
+                        ui.add_space(8.0);
+
+                        // Add send button
+                        let send_btn = ui.add_sized(
+                            [50.0, 24.0],
+                            egui::Button::new(
+                                egui::RichText::new(regular::PAPER_PLANE_RIGHT)
+                                    .size(16.0)
+                                    .color(egui::Color32::WHITE),
+                            ),
+                        );
+
+                        if send_btn.clicked() {
+                            should_send = true;
+                        }
+
+                        // Add small right margin
+                        ui.add_space(8.0);
+
+                        if should_send {
+                            self.send_command(&beacon_id);
+                            ui.ctx().request_repaint();
+                        }
                     });
+
+                    // Add a small space after the input area
+                    ui.add_space(2.0);
                 });
-        });
+            });
     }
 
     /// Render a navigation button
-    pub fn render_nav_button(&mut self, ui: &mut egui::Ui, icon: char, view: View, tooltip: &str) {
+    pub fn render_nav_button(&mut self, ui: &mut egui::Ui, icon: &str, view: View, tooltip: &str) {
         let is_selected = self.current_view == view;
 
-        let btn = egui::Button::new(egui::RichText::new(icon.to_string()).size(24.0).color(
-            if is_selected {
-                ui.visuals().selection.stroke.color
-            } else {
-                ui.visuals().text_color()
-            },
-        ))
-        .min_size(egui::vec2(40.0, 40.0));
+        let icon_text = egui::RichText::new(icon).size(24.0).color(if is_selected {
+            ui.visuals().selection.stroke.color
+        } else {
+            ui.visuals().text_color()
+        });
 
-        let response = ui.add(btn);
+        let response = ui.add(egui::Label::new(icon_text).sense(egui::Sense::click()));
 
         if response.clicked() {
             self.current_view = view;
@@ -267,16 +291,13 @@ impl GuiClient {
         if session_idx < self.active_sessions.len() {
             let session = &self.active_sessions[session_idx];
 
-            // Use monospace font for command outputs
-            let text_style = egui::TextStyle::Monospace;
-            let font_id = egui::FontId::monospace(14.0);
+            // Use monospace font for all outputs
+            let font_id = egui::FontId::monospace(12.0);
 
             // Set colors for different parts of the terminal
-            let prompt_color = egui::Color32::from_rgb(0, 230, 0); // green
-            let cmd_color = egui::Color32::LIGHT_GRAY;
             let output_color = egui::Color32::WHITE;
-            let result_color = egui::Color32::from_rgb(150, 230, 255); // light blue for results
             let error_color = egui::Color32::from_rgb(255, 100, 100); // red for errors
+            let info_color = egui::Color32::from_gray(128); // gray for info messages
 
             // Create a vertical layout for command history with fixed width
             ui.vertical(|ui| {
@@ -295,13 +316,15 @@ impl GuiClient {
                         ui.horizontal(|ui| {
                             ui.add(egui::Label::new(
                                 egui::RichText::new("$ ")
-                                    .color(prompt_color)
-                                    .font(font_id.clone()),
+                                    .color(output_color)
+                                    .font(font_id.clone())
+                                    .monospace(),
                             ));
                             ui.add(egui::Label::new(
                                 egui::RichText::new(&output[2..]) // Skip the "> " prefix
-                                    .color(cmd_color)
-                                    .font(font_id.clone()),
+                                    .color(output_color)
+                                    .font(font_id.clone())
+                                    .monospace(),
                             ));
                         });
                     } else if output.starts_with("Command scheduled")
@@ -310,9 +333,9 @@ impl GuiClient {
                         // Display command scheduling info
                         ui.add(egui::Label::new(
                             egui::RichText::new(output)
-                                .color(egui::Color32::GRAY)
-                                .italics()
-                                .font(font_id.clone()),
+                                .color(info_color)
+                                .font(font_id.clone())
+                                .monospace(),
                         ));
 
                         // Add a small space after scheduling info
@@ -325,28 +348,16 @@ impl GuiClient {
                         ui.add(egui::Label::new(
                             egui::RichText::new(output)
                                 .color(error_color)
-                                .font(font_id.clone()),
+                                .font(font_id.clone())
+                                .monospace(),
                         ));
                     } else {
-                        // Display command output - determine if it's JSON
-                        let is_json = output.starts_with('{')
-                            && output.contains("\":")
-                            && output.contains('}');
-
-                        // Ensure text wraps properly within available width
-                        if is_json {
-                            // Display JSON in a code block with syntax highlighting
-                            let text = egui::RichText::new(output)
-                                .color(result_color)
-                                .font(font_id.clone());
-                            ui.add(egui::Label::new(text));
-                        } else {
-                            // Regular output
-                            let text = egui::RichText::new(output)
-                                .color(output_color)
-                                .font(font_id.clone());
-                            ui.add(egui::Label::new(text));
-                        }
+                        // Regular output
+                        let text = egui::RichText::new(output)
+                            .color(output_color)
+                            .font(font_id.clone())
+                            .monospace();
+                        ui.add(egui::Label::new(text));
                     }
                 }
 
@@ -549,11 +560,14 @@ impl eframe::App for GuiClient {
             .show(ctx, |ui| {
                 ui.vertical_centered(|ui| {
                     ui.add_space(10.0);
-                    self.render_nav_button(ui, '📊', View::Dashboard, "Dashboard");
-                    self.render_nav_button(ui, '💻', View::Beacons, "Beacons");
-                    self.render_nav_button(ui, '📡', View::Listeners, "Listeners");
+                    self.render_nav_button(ui, regular::CHART_LINE, View::Dashboard, "Dashboard");
+                    ui.add_space(8.0);
+                    self.render_nav_button(ui, regular::DESKTOP_TOWER, View::Beacons, "Beacons");
+                    ui.add_space(8.0);
+                    self.render_nav_button(ui, regular::BROADCAST, View::Listeners, "Listeners");
                     ui.with_layout(egui::Layout::bottom_up(egui::Align::Center), |ui| {
-                        self.render_nav_button(ui, '⚙', View::Settings, "Settings");
+                        ui.add_space(10.0); // Space below settings button
+                        self.render_nav_button(ui, regular::GEAR_SIX, View::Settings, "Settings");
                     });
                 });
             });
