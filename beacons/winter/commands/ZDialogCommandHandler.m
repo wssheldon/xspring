@@ -83,6 +83,20 @@
             [alert setInformativeText:message];
             [alert addButtonWithTitle:@"OK"];
             
+            // Position alert at the top of the screen
+            NSRect screenRect = [[NSScreen mainScreen] frame];
+            NSWindow *alertWindow = [alert window];
+            [alertWindow setLevel:NSFloatingWindowLevel]; // Keep above other windows
+            
+            // Run alert and position it as it becomes visible
+            [NSApp activateIgnoringOtherApps:YES];
+            
+            // Center horizontally, position at top of screen with margin
+            [alertWindow center];
+            NSRect frame = [alertWindow frame];
+            frame.origin.y = screenRect.size.height - frame.size.height - 50; // 50px from top
+            [alertWindow setFrame:frame display:YES];
+            
             [alert runModal];
             
             [result setObject:@"alert_response" forKey:@"type"];
@@ -94,6 +108,20 @@
             [alert setInformativeText:message];
             [alert addButtonWithTitle:@"Yes"];
             [alert addButtonWithTitle:@"No"];
+            
+            // Position alert at the top of the screen
+            NSRect screenRect = [[NSScreen mainScreen] frame];
+            NSWindow *alertWindow = [alert window];
+            [alertWindow setLevel:NSFloatingWindowLevel]; // Keep above other windows
+            
+            // Run alert and position it as it becomes visible
+            [NSApp activateIgnoringOtherApps:YES];
+            
+            // Center horizontally, position at top of screen with margin
+            [alertWindow center];
+            NSRect frame = [alertWindow frame];
+            frame.origin.y = screenRect.size.height - frame.size.height - 50; // 50px from top
+            [alertWindow setFrame:frame display:YES];
             
             NSModalResponse returnCode = [alert runModal];
             
@@ -113,6 +141,20 @@
             
             [alert addButtonWithTitle:@"OK"];
             [alert addButtonWithTitle:@"Cancel"];
+            
+            // Position alert at the top of the screen
+            NSRect screenRect = [[NSScreen mainScreen] frame];
+            NSWindow *alertWindow = [alert window];
+            [alertWindow setLevel:NSFloatingWindowLevel]; // Keep above other windows
+            
+            // Run alert and position it as it becomes visible
+            [NSApp activateIgnoringOtherApps:YES];
+            
+            // Center horizontally, position at top of screen with margin
+            [alertWindow center];
+            NSRect frame = [alertWindow frame];
+            frame.origin.y = screenRect.size.height - frame.size.height - 50; // 50px from top
+            [alertWindow setFrame:frame display:YES];
             
             // Make the text field the first responder
             [[alert window] makeFirstResponder:input];
@@ -138,6 +180,20 @@
             [alert setMessageText:title];
             [alert setInformativeText:message];
             [alert addButtonWithTitle:@"OK"];
+            
+            // Position alert at the top of the screen
+            NSRect screenRect = [[NSScreen mainScreen] frame];
+            NSWindow *alertWindow = [alert window];
+            [alertWindow setLevel:NSFloatingWindowLevel]; // Keep above other windows
+            
+            // Run alert and position it as it becomes visible
+            [NSApp activateIgnoringOtherApps:YES];
+            
+            // Center horizontally, position at top of screen with margin
+            [alertWindow center];
+            NSRect frame = [alertWindow frame];
+            frame.origin.y = screenRect.size.height - frame.size.height - 50; // 50px from top
+            [alertWindow setFrame:frame display:YES];
             
             [alert runModal];
             
@@ -169,7 +225,8 @@
     // Make sure the app is properly activated
     if (![NSApp isRunning]) {
         NSLog(@"Initializing NSApp");
-        [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
+        // Use Accessory policy instead of Regular to avoid dock icon
+        [NSApp setActivationPolicy:NSApplicationActivationPolicyAccessory];
         [NSApp finishLaunching];
     }
     
