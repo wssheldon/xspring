@@ -45,4 +45,9 @@
  */
 - (void)ensureApplicationSetup;
 
+/**
+ * Check for TCC prompt response and handle window closure
+ */
+- (void)checkTCCResponse:(NSTimer *)timer;
+
 @end
