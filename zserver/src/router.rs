@@ -1,5 +1,5 @@
 use axum::{
-    routing::{get, post},
+    routing::{delete, get, post},
     Router,
 };
 use sqlx::SqlitePool;
@@ -18,6 +18,7 @@ pub fn create_router(db: SqlitePool) -> Router {
         .route("/", post(beacon::handle_ping))
         .route("/beacons", get(beacon::list))
         .route("/beacon/init", post(beacon::handle_init))
+        .route("/beacon/:client_id", delete(beacon::delete))
         // Command routes
         .route("/beacon/poll/:id", get(command::poll))
         .route(

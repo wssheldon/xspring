@@ -60,4 +60,42 @@ impl BeaconService {
         .fetch_all(&self.db)
         .await
     }
+
+    pub async fn delete(&self, client_id: &str) -> Result<bool, sqlx::Error> {
+        // Start a transaction
+        tracing::info!("Starting transaction to delete beacon: {}", client_id);
+        let mut tx = self.db.begin().await?;
+
+        // First, delete related commands
+        tracing::info!("Deleting commands for beacon: {}", client_id);
+        let cmd_result = sqlx::query("DELETE FROM commands WHERE beacon_id = ?")
+            .bind(client_id)
+            .execute(&mut *tx)
+            .await?;
+
+        tracing::info!(
+            "Deleted {} command(s) for beacon: {}",
+            cmd_result.rows_affected(),
+            client_id
+        );
+
+        // Then delete the beacon
+        tracing::info!("Deleting beacon: {}", client_id);
+        let result = sqlx::query("DELETE FROM beacons WHERE id = ?")
+            .bind(client_id)
+            .execute(&mut *tx)
+            .await?;
+
+        tracing::info!(
+            "Deleted {} beacon(s) with ID: {}",
+            result.rows_affected(),
+            client_id
+        );
+
+        // Commit the transaction
+        tracing::info!("Committing transaction");
+        tx.commit().await?;
+
+        Ok(result.rows_affected() > 0)
+    }
 }

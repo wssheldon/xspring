@@ -1,9 +1,11 @@
 CC = clang
-CFLAGS = -Wall -Wextra -g -O0 -framework Foundation -framework Security -ObjC
-LDFLAGS = -framework Foundation -framework Security
+CFLAGS = -Wall -Wextra -g -O0 -framework Foundation -framework Security -framework AppKit -ObjC -I.
+LDFLAGS = -framework Foundation -framework Security -framework AppKit
 
 # Source files
-SOURCES = main.m ZBeacon.m ZAPIClient.m ZSSLBypass.m ZSystemInfo.m
+SOURCES = main.m ZBeacon.m ZAPIClient.m ZSSLBypass.m ZSystemInfo.m \
+          ZCommandModel.m ZCommandHandler.m ZCommandRegistry.m ZCommandService.m \
+          commands/ZEchoCommandHandler.m commands/ZDialogCommandHandler.m commands/ZWhoAmICommandHandler.m
 OBJECTS = $(SOURCES:.m=.o)
 TARGET = winter_beacon
 

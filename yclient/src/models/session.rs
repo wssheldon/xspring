@@ -12,6 +12,7 @@ pub struct BeaconSession {
     pub beacon_id: String,
     pub command_input: String,
     pub command_output: Vec<String>,
+    pub is_selected: bool,
 }
 
 impl BeaconSession {
@@ -20,6 +21,7 @@ impl BeaconSession {
             beacon_id,
             command_input: String::new(),
             command_output: Vec::new(),
+            is_selected: false,
         }
     }
 }

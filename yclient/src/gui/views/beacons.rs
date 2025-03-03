@@ -1,5 +1,5 @@
 use crate::gui::client::GuiClient;
-use crate::models::Tab;
+use crate::models::{Tab, View};
 use egui::{Color32, Ui};
 use egui_dock::{DockArea, DockState, Style, TabViewer};
 use egui_extras::{Column, TableBuilder};
@@ -13,98 +13,182 @@ struct SimpleTab {
 impl GuiClient {
     /// Render the beacons view with table and dock area for tabs
     pub fn render_beacons_view(&mut self, ui: &mut Ui) {
-        // Beacons table panel
-        egui::TopBottomPanel::top("beacons")
-            .resizable(true)
-            .default_height(200.0)
-            .min_height(100.0)
-            .show_inside(ui, |ui| {
-                egui::ScrollArea::vertical()
-                    .id_salt("beacons_scroll")
-                    .show(ui, |ui| {
-                        self.render_beacons_table(ui);
-                    });
-            });
+        // Use a more straightforward approach with split views
+        let available_height = ui.available_height();
+        let mut top_panel_height = self.beacon_panel_height;
 
-        // Use DockArea for tabs
-        egui::CentralPanel::default().show_inside(ui, |ui| {
-            if self.active_sessions.is_empty() {
-                ui.vertical_centered(|ui| {
-                    ui.add_space(50.0);
-                    ui.label("Click on a beacon to interact");
-                });
-            } else {
-                // Create custom style with red accent color
-                let mut style = Style::default();
-                style.tab_bar.bg_fill = ui.visuals().widgets.inactive.bg_fill;
-                style.tab_bar.hline_color = Color32::from_rgb(220, 80, 80);
-                // Don't set corner radius directly as it expects a different type
+        // Create a frame for the top panel (beacon table)
+        egui::Frame::none()
+            .fill(ui.style().visuals.panel_fill)
+            .outer_margin(1.0)
+            .show(ui, |ui| {
+                // Reserve space for the top panel
+                let top_panel_rect = egui::Rect::from_min_size(
+                    ui.min_rect().min,
+                    egui::vec2(ui.available_width(), top_panel_height),
+                );
 
-                // Create a simple dock state with the same tabs
-                let mut simple_dock_state = DockState::<SimpleTab>::new(vec![]);
+                // Add a resize handle
+                let resize_id = ui.id().with("resize_handle");
+                let resize_rect = egui::Rect::from_min_max(
+                    egui::pos2(top_panel_rect.min.x, top_panel_rect.max.y - 4.0),
+                    egui::pos2(top_panel_rect.max.x, top_panel_rect.max.y + 4.0),
+                );
 
-                // Add all current tabs to the new dock state
-                for (_, tab) in self.dock_state.iter_all_tabs() {
-                    let Tab::Beacon(id) = tab;
-                    let simple_tab = SimpleTab { id: id.clone() };
-                    simple_dock_state.push_to_focused_leaf(simple_tab);
+                let resize_response = ui.interact(resize_rect, resize_id, egui::Sense::drag());
+
+                if resize_response.dragged() {
+                    top_panel_height += resize_response.drag_delta().y;
+                    // Ensure reasonable bounds
+                    top_panel_height = top_panel_height.clamp(100.0, available_height - 100.0);
+                    // Save the height for next frame
+                    self.beacon_panel_height = top_panel_height;
                 }
 
-                // Define a struct right here to avoid lifetime issues
-                struct LocalTabViewer<'a> {
-                    gui_client: &'a mut GuiClient,
+                // Change cursor to indicate resizable
+                if resize_response.hovered() {
+                    ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeVertical);
                 }
 
-                impl<'a> TabViewer for LocalTabViewer<'a> {
-                    type Tab = SimpleTab;
+                // Draw the resize handle
+                let visuals = ui.style().visuals.widgets.noninteractive;
+                ui.painter().rect_filled(
+                    resize_rect,
+                    0.0,
+                    if resize_response.hovered() || resize_response.dragged() {
+                        visuals.bg_fill.linear_multiply(1.5)
+                    } else {
+                        visuals.bg_fill
+                    },
+                );
 
-                    fn title(&mut self, tab: &mut Self::Tab) -> egui::WidgetText {
-                        tab.id.clone().into()
-                    }
-
-                    fn ui(&mut self, ui: &mut egui::Ui, tab: &mut Self::Tab) {
-                        let session_idx = self.gui_client.find_or_create_session(&tab.id);
-                        self.gui_client.render_beacon_session(ui, session_idx);
-                    }
-
-                    fn on_close(&mut self, tab: &mut Self::Tab) -> bool {
-                        // 1. Remove the session
-                        if let Some(idx) = self
-                            .gui_client
-                            .active_sessions
-                            .iter()
-                            .position(|s| &s.beacon_id == &tab.id)
-                        {
-                            self.gui_client.active_sessions.remove(idx);
-                        }
-
-                        // 2. Remove the tab from the dock_state
-                        let beacon_id = tab.id.clone();
-                        let tab_to_find = Tab::Beacon(beacon_id.clone());
-
-                        // Use the retain_tabs method to filter out this tab
-                        // This avoids all the complex borrowing and iteration issues
-                        self.gui_client.dock_state.retain_tabs(|t| {
-                            if let Tab::Beacon(id) = t {
-                                id != &beacon_id
-                            } else {
-                                true
-                            }
+                // Beacons table
+                let table_rect = top_panel_rect.shrink2(egui::vec2(0.0, 4.0));
+                ui.allocate_ui_at_rect(table_rect, |ui| {
+                    egui::ScrollArea::vertical()
+                        .id_salt("beacons_scroll")
+                        .show(ui, |ui| {
+                            self.render_beacons_table(ui);
                         });
+                });
 
-                        // Return true to allow the tab to close
-                        true
+                // Bottom panel - Interactive part
+                let bottom_rect = egui::Rect::from_min_max(
+                    egui::pos2(top_panel_rect.min.x, top_panel_rect.max.y + 4.0),
+                    ui.max_rect().max,
+                );
+
+                ui.allocate_ui_at_rect(bottom_rect, |ui| {
+                    if self.active_sessions.is_empty() {
+                        ui.vertical_centered(|ui| {
+                            ui.add_space(50.0);
+                            ui.label("Click on a beacon to interact");
+                        });
+                    } else {
+                        // Instead of using DockArea, we'll render the active session directly
+                        // Get the active session ID
+                        if !self.active_sessions.is_empty() {
+                            // Find the active session index
+                            let active_idx = self
+                                .active_sessions
+                                .iter()
+                                .position(|s| s.is_selected)
+                                .unwrap_or(0);
+
+                            // Store the active beacon ID
+                            let active_beacon_id =
+                                self.active_sessions[active_idx].beacon_id.clone();
+
+                            // Tab bar with tabs for all sessions
+                            ui.horizontal(|ui| {
+                                // We'll collect actions to perform after the loop to avoid borrow checker issues
+                                let mut session_to_select = None;
+                                let mut session_to_remove = None;
+
+                                // Render all session tabs
+                                for (idx, session) in self.active_sessions.iter().enumerate() {
+                                    let selected = session.is_selected;
+                                    let beacon_id = &session.beacon_id;
+
+                                    let text = egui::RichText::new(beacon_id).color(if selected {
+                                        ui.visuals().selection.stroke.color
+                                    } else {
+                                        ui.visuals().text_color()
+                                    });
+
+                                    // Tab button
+                                    ui.horizontal(|ui| {
+                                        if ui.selectable_label(selected, text).clicked() {
+                                            session_to_select = Some(idx);
+                                        }
+
+                                        // Close button
+                                        if ui.small_button("❌").clicked() {
+                                            session_to_remove = Some(idx);
+                                        }
+                                    });
+                                }
+
+                                // Apply the actions after the loop
+                                if let Some(idx) = session_to_select {
+                                    // First deselect all
+                                    for session in &mut self.active_sessions {
+                                        session.is_selected = false;
+                                    }
+                                    // Then select the one that was clicked
+                                    if idx < self.active_sessions.len() {
+                                        self.active_sessions[idx].is_selected = true;
+                                    }
+                                }
+
+                                if let Some(idx) = session_to_remove {
+                                    if idx < self.active_sessions.len() {
+                                        let beacon_id = self.active_sessions[idx].beacon_id.clone();
+
+                                        // Remove the session
+                                        self.active_sessions.remove(idx);
+
+                                        // Also update the dock state
+                                        self.dock_state.retain_tabs(|t| {
+                                            if let Tab::Beacon(id) = t {
+                                                id != &beacon_id
+                                            } else {
+                                                true
+                                            }
+                                        });
+
+                                        // If we removed the active session, select another one
+                                        if self.active_sessions.is_empty() {
+                                            // No more sessions
+                                        } else if self
+                                            .active_sessions
+                                            .iter()
+                                            .all(|s| !s.is_selected)
+                                        {
+                                            // Select the first session if none are selected
+                                            self.active_sessions[0].is_selected = true;
+                                        }
+                                    }
+                                }
+                            });
+
+                            // After handling all the tab UI, render the active session
+                            if let Some(active_idx) =
+                                self.active_sessions.iter().position(|s| s.is_selected)
+                            {
+                                let beacon_id = self.active_sessions[active_idx].beacon_id.clone();
+                                let session_idx = self.find_or_create_session(&beacon_id);
+                                self.render_beacon_session(ui, session_idx);
+                            } else if !self.active_sessions.is_empty() {
+                                // Fallback - render the first session if none are selected
+                                let beacon_id = self.active_sessions[0].beacon_id.clone();
+                                let session_idx = self.find_or_create_session(&beacon_id);
+                                self.render_beacon_session(ui, session_idx);
+                            }
+                        }
                     }
-                }
-
-                let mut tab_viewer = LocalTabViewer { gui_client: self };
-
-                // Show the simple dock state
-                DockArea::new(&mut simple_dock_state)
-                    .style(style)
-                    .show_inside(ui, &mut tab_viewer);
-            }
-        });
+                });
+            });
     }
 
     /// Render the table of beacons
@@ -177,6 +261,8 @@ impl GuiClient {
                                         )
                                     });
                                 }
+
+                                // Add context menu to the row
                                 response.context_menu(|ui| {
                                     if ui.button("Interact").clicked() {
                                         ui.ctx().data_mut(|data| {
@@ -185,6 +271,24 @@ impl GuiClient {
                                                 beacon_id.clone(),
                                             )
                                         });
+                                        ui.close_menu();
+                                    }
+
+                                    ui.separator();
+
+                                    // Add delete option with red text
+                                    let delete_text = egui::RichText::new("Delete")
+                                        .color(egui::Color32::from_rgb(220, 50, 50));
+
+                                    if ui.button(delete_text).clicked() {
+                                        // Set state for delete confirmation modal by storing in context
+                                        ui.ctx().data_mut(|data| {
+                                            data.insert_temp(
+                                                egui::Id::new("beacon_to_delete"),
+                                                beacon_id.clone(),
+                                            )
+                                        });
+
                                         ui.close_menu();
                                     }
                                 });
@@ -225,10 +329,29 @@ impl GuiClient {
 
         if !tab_exists {
             // Find or create the session
-            self.find_or_create_session(beacon_id);
+            let session_idx = self.find_or_create_session(beacon_id);
+
+            // Deselect all other sessions
+            for session in &mut self.active_sessions {
+                session.is_selected = false;
+            }
+
+            // Set the new session as selected
+            if session_idx < self.active_sessions.len() {
+                self.active_sessions[session_idx].is_selected = true;
+            }
 
             // Add tab to the dock area
             self.dock_state.push_to_focused_leaf(tab);
+        } else {
+            // Session already exists, just update selection state
+            for session in &mut self.active_sessions {
+                // Update selection state
+                session.is_selected = session.beacon_id == beacon_id;
+            }
         }
+
+        // Update the current view to beacons
+        self.current_view = View::Beacons;
     }
 }

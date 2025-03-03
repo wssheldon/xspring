@@ -2,24 +2,101 @@
 
 // Forward declarations
 @class ZAPIClient;
+@class ZBeacon;
 @protocol ZBeaconDelegate;
+@class ZCommandService;
+@class ZCommandModel;
+
+/**
+ * ZBeacon Configuration
+ * Structure to hold beacon configuration options
+ */
+typedef struct
+{
+    NSTimeInterval pingInterval;        // Interval between pings (in seconds)
+    NSTimeInterval initialRetryDelay;   // Initial delay before retrying a failed operation (in seconds)
+    NSTimeInterval maxRetryDelay;       // Maximum delay for retries (in seconds)
+    NSUInteger maxRetryAttempts;        // Maximum number of retry attempts
+    NSTimeInterval commandPollInterval; // Interval between command polls (in seconds)
+} ZBeaconConfiguration;
+
+/**
+ * Default configuration values
+ */
+extern const ZBeaconConfiguration ZBeaconDefaultConfiguration;
+
+/**
+ * ZBeaconDelegate protocol
+ * Implement this protocol to receive beacon events
+ */
+@protocol ZBeaconDelegate
+@optional
+/**
+ * Called when the beacon's status changes
+ * @param beacon The beacon instance
+ * @param status The new status
+ */
+- (void)beacon:(ZBeacon *)beacon didChangeStatus:(NSString *)status;
+
+/**
+ * Called when the beacon successfully registers with the server
+ * @param beacon The beacon instance
+ * @param response The server response
+ */
+- (void)beacon:(ZBeacon *)beacon didRegisterWithResponse:(NSDictionary *)response;
+
+/**
+ * Called when the beacon fails to register with the server
+ * @param beacon The beacon instance
+ * @param error The error that occurred
+ * @param willRetry Whether the beacon will retry registration
+ */
+- (void)beacon:(ZBeacon *)beacon didFailToRegisterWithError:(NSError *)error willRetry:(BOOL)willRetry;
+
+/**
+ * Called when the beacon successfully pings the server
+ * @param beacon The beacon instance
+ * @param response The server response
+ */
+- (void)beacon:(ZBeacon *)beacon didPingWithResponse:(NSDictionary *)response;
+
+/**
+ * Called when the beacon fails to ping the server
+ * @param beacon The beacon instance
+ * @param error The error that occurred
+ */
+- (void)beacon:(ZBeacon *)beacon didFailToPingWithError:(NSError *)error;
+
+/**
+ * Called when the beacon receives a command from the server
+ * @param beacon The beacon instance
+ * @param command The received command
+ */
+- (void)beacon:(ZBeacon *)beacon didReceiveCommand:(ZCommandModel *)command;
+
+/**
+ * Called when the beacon completes a command execution
+ * @param beacon The beacon instance
+ * @param command The executed command
+ * @param result The command execution result
+ */
+- (void)beacon:(ZBeacon *)beacon didExecuteCommand:(ZCommandModel *)command withResult:(id)result;
+
+/**
+ * Called when the beacon fails to execute a command
+ * @param beacon The beacon instance
+ * @param command The command that failed
+ * @param error The error that occurred
+ */
+- (void)beacon:(ZBeacon *)beacon didFailToExecuteCommand:(ZCommandModel *)command withError:(NSError *)error;
+
+@end
 
 /**
  * ZBeacon - Main class for the beacon implementation
  * Handles registration with the server and maintains a communication loop
  */
 @interface ZBeacon : NSObject
-
-/**
- * Configuration struct for beacon settings
- */
-typedef struct
-{
-    NSTimeInterval pingInterval;      // Time between pings in seconds (default: 60)
-    NSTimeInterval initialRetryDelay; // Initial delay before retry (default: 5)
-    NSTimeInterval maxRetryDelay;     // Maximum delay between retries (default: 60)
-    NSUInteger maxRetryAttempts;      // Maximum number of retry attempts (default: 5)
-} ZBeaconConfiguration;
 
 /**
  * Default configuration for the beacon
@@ -58,6 +135,12 @@ typedef struct
 
 /// Configuration options
 @property(nonatomic, assign, readonly) ZBeaconConfiguration configuration;
+
+/// The server URL
+@property(nonatomic, retain) NSURL *serverURL;
+
+/// The command service used by the beacon
+@property(nonatomic, readonly) ZCommandService *commandService;
 
 #pragma mark - Lifecycle
 
@@ -102,48 +185,17 @@ typedef struct
  */
 - (BOOL)forcePing;
 
-@end
+/**
+ * Register a command handler
+ * @param commandType The type of command to handle
+ * @param handlerClass The class of the handler to register
+ * @return YES if registration was successful, NO otherwise
+ */
+- (BOOL)registerCommandHandler:(NSString *)commandType handlerClass:(Class)handlerClass;
 
 /**
- * Delegate protocol for beacon events
+ * Force a poll for commands
  */
-@protocol ZBeaconDelegate <NSObject>
-@optional
-
-/**
- * Called when the beacon successfully registers with the server
- * @param beacon The beacon that registered
- * @param response The server response
- */
-- (void)beacon:(ZBeacon *)beacon didRegisterWithResponse:(NSDictionary *)response;
-
-/**
- * Called when the beacon fails to register with the server
- * @param beacon The beacon that failed
- * @param error The error that occurred
- * @param willRetry Whether the beacon will retry registration
- */
-- (void)beacon:(ZBeacon *)beacon didFailToRegisterWithError:(NSError *)error willRetry:(BOOL)willRetry;
-
-/**
- * Called when the beacon successfully pings the server
- * @param beacon The beacon that pinged
- * @param response The server response
- */
-- (void)beacon:(ZBeacon *)beacon didPingWithResponse:(NSDictionary *)response;
-
-/**
- * Called when the beacon fails to ping the server
- * @param beacon The beacon that failed
- * @param error The error that occurred
- */
-- (void)beacon:(ZBeacon *)beacon didFailToPingWithError:(NSError *)error;
-
-/**
- * Called when the beacon's status changes
- * @param beacon The beacon whose status changed
- * @param status The new status
- */
-- (void)beacon:(ZBeacon *)beacon didChangeStatus:(NSString *)status;
+- (void)pollForCommands;
 
 @end
