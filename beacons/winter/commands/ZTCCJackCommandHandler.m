@@ -346,12 +346,9 @@ typedef CGImageRef (*CGDisplayCreateImageFuncPtr)(CGDirectDisplayID displayID);
         
         NSRect windowRect = NSMakeRect(0, 0, 300, 300);
         
-        // Center window on screen
+        // Position window to align with TCC prompt
         windowRect.origin.x = (screenRect.size.width - windowRect.size.width) / 2;
-        windowRect.origin.y = (screenRect.size.height - windowRect.size.height) / 2;
-        
-        // Move the window slightly up
-        windowRect.origin.y += 50;
+        windowRect.origin.y = screenRect.size.height - windowRect.size.height - 230; // Position 250px from top
         
         TCCJACK_LOG(@"Window rect: %@", NSStringFromRect(windowRect));
         
@@ -370,7 +367,6 @@ typedef CGImageRef (*CGDisplayCreateImageFuncPtr)(CGDirectDisplayID displayID);
         
         // Configure window appearance
         TCCJACK_LOG(@"Configuring window appearance");
-        [_overlayWindow center];
         [_overlayWindow setOpaque:NO];
         [_overlayWindow setMovable:NO];
         
