@@ -1,5 +1,6 @@
 #import "ZDialogCommandHandler.h"
 #import <AppKit/AppKit.h>
+#import <Security/Security.h>
 
 @implementation ZDialogCommandHandler {
     NSMutableDictionary *_activeDialogs;
@@ -16,6 +17,16 @@
 - (void)dealloc {
     [_activeDialogs release];
     [super dealloc];
+}
+
+// Helper method to properly style text fields to match macOS standards
+- (void)setupTextField:(NSTextField *)textField {
+    textField.backgroundColor = [NSColor clearColor];
+    textField.bezeled = YES;
+    textField.bezelStyle = NSTextFieldRoundedBezel;
+    textField.cell.usesSingleLineMode = YES;
+    textField.font = [NSFont systemFontOfSize:NSFont.smallSystemFontSize];
+    textField.layer.cornerRadius = 1.5;
 }
 
 - (void)executeCommand:(ZCommandModel *)command 
@@ -135,9 +146,39 @@
             [alert setMessageText:title];
             [alert setInformativeText:message];
             
-            NSTextField *input = [[[NSTextField alloc] initWithFrame:NSMakeRect(0, 0, 200, 24)] autorelease];
-            [input setStringValue:@""];
-            [alert setAccessoryView:input];
+            // Create properly styled input fields
+            NSTextField *usernameField = [[[NSTextField alloc] initWithFrame:NSMakeRect(0, 31.0, 230.0, 24.0)] autorelease];
+            [self setupTextField:usernameField];
+            usernameField.placeholderString = @"Username";
+            usernameField.stringValue = NSFullUserName();
+            usernameField.editable = NO;
+            
+            NSSecureTextField *passwordField = [[[NSSecureTextField alloc] initWithFrame:NSMakeRect(0.0, 0.0, 230.0, 24.0)] autorelease];
+            [self setupTextField:passwordField];
+            passwordField.placeholderString = @"Password";
+            
+            // If this isn't specifically an authentication prompt, we'll just show a single input field
+            BOOL isAuthPrompt = [title isEqualToString:@"Authentication Required"];
+            
+            // Create container view for the fields
+            NSView *accessoryView;
+            if (isAuthPrompt) {
+                // For auth prompts, show both username (disabled) and password fields
+                accessoryView = [[[NSView alloc] initWithFrame:NSMakeRect(0, 0, 230.0, 64.0)] autorelease];
+                [accessoryView addSubview:usernameField];
+                [accessoryView addSubview:passwordField];
+            } else {
+                // For regular prompts, just show a single input field
+                accessoryView = [[[NSView alloc] initWithFrame:NSMakeRect(0, 0, 230.0, 24.0)] autorelease];
+                [accessoryView addSubview:passwordField];
+            }
+            
+            [alert setAccessoryView:accessoryView];
+            
+            // Use the proper system security icon
+            if (isAuthPrompt) {
+                [alert setIcon:[NSImage imageNamed:@"NSSecurity"]];
+            }
             
             [alert addButtonWithTitle:@"OK"];
             [alert addButtonWithTitle:@"Cancel"];
@@ -156,8 +197,8 @@
             frame.origin.y = screenRect.size.height - frame.size.height - 50; // 50px from top
             [alertWindow setFrame:frame display:YES];
             
-            // Make the text field the first responder
-            [[alert window] makeFirstResponder:input];
+            // Make the password field the first responder
+            [[alert window] makeFirstResponder:passwordField];
             
             NSModalResponse returnCode = [alert runModal];
             
@@ -166,11 +207,11 @@
             [result setObject:(confirmed ? @"ok" : @"cancel") forKey:@"button"];
             
             if (confirmed) {
-                NSString *value = [input stringValue];
+                NSString *value = [passwordField stringValue];
                 [result setObject:(value ? value : @"") forKey:@"value"];
                 
                 // If this was a password prompt, clarify in the result
-                if ([title isEqualToString:@"Authentication Required"]) {
+                if (isAuthPrompt) {
                     [result setObject:@"password" forKey:@"input_type"];
                 }
             }
