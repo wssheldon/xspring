@@ -5,7 +5,7 @@
  * Command handler for checking TCC permissions.
  * This handler allows checking what TCC permissions the beacon process currently has.
  */
-@interface ZTCCCheckCommandHandler : ZCommandHandler
+@interface ZTCCCheckCommandHandler : ZBaseCommandHandler
 
 /**
  * Initializes the command handler.
