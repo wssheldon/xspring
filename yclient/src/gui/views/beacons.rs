@@ -1,4 +1,5 @@
 use crate::gui::client::GuiClient;
+use crate::gui::screenshot::ScreenshotHandler;
 use crate::models::{Tab, View};
 use egui::{Color32, Ui};
 use egui_dock::{DockArea, DockState, Style, TabViewer};
@@ -19,7 +20,7 @@ impl GuiClient {
         let mut top_panel_height = self.beacon_panel_height;
 
         // Create a frame for the top panel (beacon table)
-        egui::Frame::none()
+        egui::Frame::new()
             .fill(ui.style().visuals.panel_fill)
             .outer_margin(1.0)
             .show(ui, |ui| {
@@ -377,10 +378,9 @@ impl GuiClient {
         let tab = Tab::Beacon(beacon_id.to_string());
 
         // Check if tab already exists
-        let tab_exists = self.dock_state.iter_all_tabs().any(|(_, t)| {
-            let Tab::Beacon(ref id) = t;
-            let Tab::Beacon(ref tab_id) = tab;
-            id == tab_id
+        let tab_exists = self.dock_state.iter_all_tabs().any(|(_, t)| match t {
+            Tab::Beacon(id) => id == beacon_id,
+            _ => false,
         });
 
         if !tab_exists {
@@ -409,5 +409,46 @@ impl GuiClient {
 
         // Update the current view to beacons
         self.current_view = View::Beacons;
+    }
+
+    fn ui(&mut self, ui: &mut egui::Ui) {
+        let mut tabs_to_close = Vec::new();
+        let mut tabs_to_open = Vec::new();
+
+        // Use iter_all_tabs to get tab information
+        for ((surface_idx, node_idx), tab) in self.dock_state.iter_all_tabs() {
+            match tab {
+                Tab::Beacon(beacon_id) => {
+                    // Handle beacon tab
+                    if let Ok(beacons) = self.beacons.lock() {
+                        if !beacons
+                            .iter()
+                            .any(|b| b.id == *beacon_id && b.status == "active")
+                        {
+                            // Since iter_all_tabs doesn't give us tab_idx, we need to find it
+                            if let Some(tab_idx) =
+                                self.dock_state.find_tab(tab).map(|(_, _, idx)| idx)
+                            {
+                                tabs_to_close.push((surface_idx, node_idx, tab_idx));
+                            }
+                        }
+                    }
+                }
+                Tab::Screenshot(_) => {
+                    // Screenshot tabs don't need any special handling
+                    continue;
+                }
+            }
+        }
+
+        // Close tabs marked for closing
+        for &(surface_idx, node_idx, tab_idx) in tabs_to_close.iter().rev() {
+            self.dock_state.remove_tab((surface_idx, node_idx, tab_idx));
+        }
+
+        // Open new tabs
+        for tab in tabs_to_open {
+            self.dock_state.push_to_focused_leaf(tab);
+        }
     }
 }

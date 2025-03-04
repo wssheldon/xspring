@@ -1,4 +1,5 @@
 pub mod client;
+pub mod screenshot;
 pub mod tab;
 pub mod views;
 

