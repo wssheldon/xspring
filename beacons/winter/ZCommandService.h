@@ -1,7 +1,8 @@
 #import <Foundation/Foundation.h>
-#import "ZCommandModel.h"
-@class ZCommandService;
-@class ZAPIClient;
+#import "ZCommandPoller.h"
+#import "ZCommandReporter.h"
+#import "ZCommandExecutor.h"
+@class ZCommandModel;
 
 /**
  * @protocol ZCommandServiceDelegate
@@ -19,7 +20,25 @@
  * @param service The command service
  * @param command The received command
  */
-- (void)commandService:(ZCommandService *)service didReceiveCommand:(ZCommandModel *)command;
+- (void)commandService:(id)service didReceiveCommand:(ZCommandModel *)command;
+
+/**
+ * Called when a command is successfully executed
+ *
+ * @param service The command service
+ * @param command The executed command
+ * @param result The result of the command execution
+ */
+- (void)commandService:(id)service didExecuteCommand:(ZCommandModel *)command withResult:(NSDictionary *)result;
+
+/**
+ * Called when a command execution fails
+ *
+ * @param service The command service
+ * @param command The command that failed to execute
+ * @param error The error that occurred
+ */
+- (void)commandService:(id)service didFailToExecuteCommand:(ZCommandModel *)command withError:(NSError *)error;
 
 /**
  * Called when a command is successfully reported to the server
@@ -28,7 +47,7 @@
  * @param command The command that was reported
  * @param response The server response
  */
-- (void)commandService:(ZCommandService *)service didReportCommand:(ZCommandModel *)command withResponse:(NSDictionary *)response;
+- (void)commandService:(id)service didReportCommand:(ZCommandModel *)command withResponse:(NSDictionary *)response;
 
 /**
  * Called when a command report fails
@@ -37,18 +56,15 @@
  * @param command The command that failed to report
  * @param error The error that occurred
  */
-- (void)commandService:(ZCommandService *)service didFailToReportCommand:(ZCommandModel *)command withError:(NSError *)error;
+- (void)commandService:(id)service didFailToReportCommand:(ZCommandModel *)command withError:(NSError *)error;
 
 @end
 
 /**
  * @interface ZCommandService
- * @brief Service for communicating with the command server
- *
- * This class handles communication with the command server, including polling for commands,
- * reporting command execution results, and managing timeouts.
+ * @brief High-level service that coordinates command polling, execution, and reporting
  */
-@interface ZCommandService : NSObject
+@interface ZCommandService : NSObject <ZCommandPollerDelegate, ZCommandReporterDelegate, ZCommandExecutorDelegate>
 
 /**
  * The service delegate
@@ -66,9 +82,9 @@
 @property(nonatomic, assign) NSTimeInterval commandTimeout;
 
 /**
- * The API client
+ * Indicates whether the command service is running
  */
-@property(nonatomic, strong, readonly) ZAPIClient *apiClient;
+@property(nonatomic, readonly) BOOL isRunning;
 
 /**
  * Initialize with a server URL
@@ -88,19 +104,19 @@
 - (instancetype)initWithServerURL:(NSURL *)serverURL beaconId:(NSString *)beaconId;
 
 /**
- * Start the command polling service
+ * Start the command service
  *
- * @return YES if the service was started successfully, NO otherwise
+ * @return YES if started successfully, NO otherwise
  */
 - (BOOL)start;
 
 /**
- * Stop the command polling service
+ * Stop the command service
  */
 - (void)stop;
 
 /**
- * Force a poll for commands immediately
+ * Poll for commands immediately
  */
 - (void)pollNow;
 

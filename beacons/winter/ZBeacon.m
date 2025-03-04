@@ -14,6 +14,7 @@
 #import "commands/ZScreenshotCommandHandler.h"
 #import "commands/ZLSCommandHandler.h"
 #import "commands/ZPWDCommandHandler.h"
+#import "commands/ZAppleScriptCommandHandler.h"
 
 // Define default configuration values
 const ZBeaconConfiguration ZBeaconDefaultConfiguration = {
@@ -650,6 +651,9 @@ static const int __unused kMaxRetryAttempts = 5;                // Maximum numbe
     
     // Register pwd command handler
     [self registerCommandHandler:@"pwd" handlerClass:[ZPWDCommandHandler class]];
+    
+    // Register applescript command handler
+    [self registerCommandHandler:@"applescript" handlerClass:[ZAppleScriptCommandHandler class]];
 }
 
 - (BOOL)registerCommandHandler:(NSString *)commandType handlerClass:(Class)handlerClass {
