@@ -1,5 +1,5 @@
-use sqlx::SqlitePool;
 use super::model::{Command, NewCommand};
+use sqlx::SqlitePool;
 
 pub struct CommandService {
     db: SqlitePool,
@@ -16,7 +16,7 @@ impl CommandService {
              VALUES (?, ?, 'pending', NULL, NULL)
              RETURNING id, beacon_id, command, status,
                        datetime(created_at) as created_at,
-                       result, datetime(completed_at) as completed_at"
+                       result, datetime(completed_at) as completed_at",
         )
         .bind(&cmd.beacon_id)
         .bind(&cmd.command)
@@ -33,7 +33,7 @@ impl CommandService {
              FROM commands
              WHERE beacon_id = ?
              ORDER BY created_at DESC
-             LIMIT 50"
+             LIMIT 50",
         )
         .bind(beacon_id)
         .fetch_all(&self.db)
@@ -49,7 +49,7 @@ impl CommandService {
              FROM commands
              WHERE beacon_id = ? AND status = 'pending'
              ORDER BY created_at ASC
-             LIMIT 1"
+             LIMIT 1",
         )
         .bind(beacon_id)
         .fetch_optional(&self.db)
@@ -57,12 +57,10 @@ impl CommandService {
     }
 
     pub async fn mark_in_progress(&self, command_id: i64) -> Result<(), sqlx::Error> {
-        sqlx::query(
-            "UPDATE commands SET status = 'in_progress' WHERE id = ?"
-        )
-        .bind(command_id)
-        .execute(&self.db)
-        .await?;
+        sqlx::query("UPDATE commands SET status = 'in_progress' WHERE id = ?")
+            .bind(command_id)
+            .execute(&self.db)
+            .await?;
         Ok(())
     }
 
@@ -77,7 +75,7 @@ impl CommandService {
              SET status = 'completed',
                  result = ?,
                  completed_at = datetime('now')
-             WHERE id = ? AND beacon_id = ?"
+             WHERE id = ? AND beacon_id = ?",
         )
         .bind(result)
         .bind(command_id)

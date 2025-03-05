@@ -2,6 +2,7 @@ use clap::Parser;
 use std::process;
 
 // Import modules
+mod api;
 mod cli;
 mod gui;
 mod models;
@@ -30,33 +31,55 @@ fn main() -> Result<(), eframe::Error> {
 
     // Run in CLI mode if --cli flag is provided
     if args.cli {
-        match Client::new() {
-            Ok(mut client) => {
-                if let Err(e) = client.run() {
-                    eprintln!("Error: {}", e);
+        // Create a new runtime for CLI mode
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            match Client::new() {
+                Ok(mut client) => {
+                    if let Err(e) = client.run().await {
+                        eprintln!("Error: {}", e);
+                        process::exit(1);
+                    }
+                }
+                Err(e) => {
+                    eprintln!("Failed to initialize client: {}", e);
                     process::exit(1);
                 }
-                Ok(())
             }
-            Err(e) => {
-                eprintln!("Failed to initialize client: {}", e);
-                process::exit(1);
-            }
-        }
+        });
+        Ok(())
     } else {
         // Run in GUI mode (default)
         let options = eframe::NativeOptions {
             viewport: egui::ViewportBuilder::default()
                 .with_inner_size([1280.0, 720.0])
-                .with_min_inner_size([800.0, 600.0]),
+                .with_min_inner_size([800.0, 600.0])
+                .with_decorations(true)
+                .with_transparent(true)
+                .with_title_shown(true)
+                .with_titlebar_shown(true)
+                .with_titlebar_buttons_shown(true)
+                .with_title("🌸💐"),
+            vsync: true,
+            multisampling: 0,
+            depth_buffer: 0,
+            stencil_buffer: 0,
             ..Default::default()
         };
 
         // Start the GUI application
         eframe::run_native(
-            "XClient",
+            "🌸💐",
             options,
-            Box::new(|cc| Ok(Box::new(GuiClient::new(cc)))),
+            Box::new(|cc| {
+                // Configure dark visuals
+                let mut visuals = egui::Visuals::dark();
+                visuals.panel_fill = egui::Color32::from_rgb(20, 20, 20);
+                visuals.window_fill = egui::Color32::from_rgb(20, 20, 20);
+                visuals.override_text_color = Some(egui::Color32::WHITE);
+                cc.egui_ctx.set_visuals(visuals);
+                Ok(Box::new(GuiClient::new(cc)))
+            }),
         )
     }
 }

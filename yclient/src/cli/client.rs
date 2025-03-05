@@ -1,4 +1,5 @@
-use crate::utils::{ApiClient, Result};
+use crate::api::ApiClient;
+use crate::cli::error::{CliError, Result};
 use colored::*;
 use rustyline::error::ReadlineError;
 use rustyline::DefaultEditor;
@@ -28,7 +29,7 @@ impl Client {
         }
 
         // Create API client with default server URL
-        let api = ApiClient::new(String::from("https://localhost:4444"));
+        let api = ApiClient::new(String::from("https://localhost:4444"))?;
 
         Ok(Self {
             editor,
@@ -38,9 +39,14 @@ impl Client {
     }
 
     /// Create a new client with a custom server URL
-    pub fn with_server_url(mut self, server_url: String) -> Self {
-        self.api = self.api.with_base_url(server_url);
-        self
+    pub fn with_server_url(self, server_url: String) -> Result<Self> {
+        let api = ApiClient::builder().base_url(server_url).build()?;
+
+        Ok(Self {
+            editor: self.editor,
+            history_path: self.history_path,
+            api,
+        })
     }
 
     /// Print available commands
@@ -57,7 +63,7 @@ impl Client {
     }
 
     /// Process a command entered by the user
-    pub fn handle_command(&self, command: &str) -> bool {
+    async fn handle_command(&self, command: &str) -> bool {
         let parts: Vec<&str> = command.trim().split_whitespace().collect();
         match parts.get(0).map(|s| *s) {
             Some("exit") | Some("quit") => {
@@ -73,11 +79,11 @@ impl Client {
                 true
             }
             Some("ping") => {
-                self.handle_ping();
+                self.handle_ping().await;
                 true
             }
             Some("beacons") => {
-                self.handle_list_beacons();
+                self.handle_list_beacons().await;
                 true
             }
             Some("run") => {
@@ -86,7 +92,7 @@ impl Client {
                 } else {
                     let beacon_id = parts[1];
                     let command = parts[2..].join(" ");
-                    self.handle_send_command(beacon_id, &command);
+                    self.handle_send_command(beacon_id, &command).await;
                 }
                 true
             }
@@ -94,7 +100,7 @@ impl Client {
                 if parts.len() != 2 {
                     println!("{}", "Usage: commands <beacon_id>".red());
                 } else {
-                    self.handle_list_commands(parts[1]);
+                    self.handle_list_commands(parts[1]).await;
                 }
                 true
             }
@@ -108,8 +114,8 @@ impl Client {
     }
 
     /// Handle the ping command
-    fn handle_ping(&self) {
-        match self.api.ping() {
+    async fn handle_ping(&self) {
+        match self.api.ping().await {
             Ok(response) => {
                 println!("{} {}", "Server response:".green(), response);
             }
@@ -120,8 +126,8 @@ impl Client {
     }
 
     /// Handle the beacons command
-    fn handle_list_beacons(&self) {
-        match self.api.get_beacons() {
+    async fn handle_list_beacons(&self) {
+        match self.api.get_beacons().await {
             Ok(beacons) => {
                 println!("\n{}", "Active Beacons:".green().bold());
                 for beacon in beacons {
@@ -151,8 +157,8 @@ impl Client {
     }
 
     /// Handle the send command operation
-    fn handle_send_command(&self, beacon_id: &str, command: &str) {
-        match self.api.send_command(beacon_id, command) {
+    async fn handle_send_command(&self, beacon_id: &str, command: &str) {
+        match self.api.send_command(beacon_id, command).await {
             Ok(cmd) => {
                 println!(
                     "{} Command {} scheduled for beacon {}",
@@ -168,8 +174,8 @@ impl Client {
     }
 
     /// Handle the list commands operation
-    fn handle_list_commands(&self, beacon_id: &str) {
-        match self.api.list_commands(beacon_id) {
+    async fn handle_list_commands(&self, beacon_id: &str) {
+        match self.api.list_commands(beacon_id).await {
             Ok(commands) => {
                 if commands.is_empty() {
                     println!(
@@ -209,7 +215,7 @@ impl Client {
     }
 
     /// Run the CLI client
-    pub fn run(&mut self) -> Result<()> {
+    pub async fn run(&mut self) -> Result<()> {
         println!("\n{}", "Welcome to XClient!".green().bold());
         self.print_help();
 
@@ -218,7 +224,7 @@ impl Client {
             match self.editor.readline(&prompt) {
                 Ok(line) => {
                     self.editor.add_history_entry(line.as_str())?;
-                    if !self.handle_command(&line) {
+                    if !self.handle_command(&line).await {
                         break;
                     }
                 }

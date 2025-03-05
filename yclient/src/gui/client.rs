@@ -577,7 +577,7 @@ impl GuiClient {
 }
 
 impl eframe::App for GuiClient {
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+    fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         // Poll for command results more frequently
         let now = std::time::Instant::now();
 
@@ -645,7 +645,7 @@ impl eframe::App for GuiClient {
                 self.render_dashboard_view(ui);
             }
             View::Beacons => {
-                self.render_beacons_view(ui);
+                self.render_beacons_tree_view(ui);
             }
             View::Listeners => {
                 self.render_listeners_view(ui);
