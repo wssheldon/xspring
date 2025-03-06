@@ -6,6 +6,10 @@
     return [super initWithType:@"ls"];
 }
 
+- (NSString *)command {
+    return @"ls";
+}
+
 - (void)executeCommand:(ZCommandModel *)command 
            completion:(void (^)(BOOL success, NSDictionary *result, NSError *error))completion {
     NSLog(@"Executing ls command: %@", [command commandId]);

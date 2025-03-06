@@ -23,6 +23,33 @@
     return self.type;
 }
 
+- (NSString *)command {
+    [self doesNotRecognizeSelector:_cmd];
+    return nil;
+}
+
+- (NSString *)description {
+    [self doesNotRecognizeSelector:_cmd];
+    return nil;
+}
+
+- (BOOL)handleCommand:(ZCommandModel *)command {
+    [self doesNotRecognizeSelector:_cmd];
+    return NO;
+}
+
+- (BOOL)canCancelCommand {
+    return NO;
+}
+
+- (BOOL)cancelCommand:(ZCommandModel *)command {
+    return NO;
+}
+
+- (BOOL)supportsMultipleCommands {
+    return NO;
+}
+
 - (void)executeCommand:(ZCommandModel *)command 
            completion:(void (^)(BOOL success, NSDictionary *result, NSError *error))completion {
     // Base implementation doesn't do anything
@@ -35,21 +62,6 @@
     if (completion) {
         completion(NO, nil, error);
     }
-}
-
-- (BOOL)canCancelCommand {
-    // Base implementation doesn't support cancellation
-    return NO;
-}
-
-- (BOOL)cancelCommand:(ZCommandModel *)command {
-    // Base implementation can't cancel commands
-    return NO;
-}
-
-- (BOOL)supportsMultipleCommands {
-    // By default, handlers only support one command at a time
-    return NO;
 }
 
 @end 

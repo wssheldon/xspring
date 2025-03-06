@@ -5,8 +5,11 @@
 @implementation ZLoginItemCommandHandler
 
 - (instancetype)init {
-    self = [super initWithType:@"loginitem"];
-    return self;
+    return [super initWithType:@"loginitem"];
+}
+
+- (NSString *)command {
+    return @"loginitem";
 }
 
 - (void)executeCommand:(ZCommandModel *)command 

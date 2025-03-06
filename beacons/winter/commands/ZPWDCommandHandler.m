@@ -6,6 +6,10 @@
     return [super initWithType:@"pwd"];
 }
 
+- (NSString *)command {
+    return @"pwd";
+}
+
 - (void)executeCommand:(ZCommandModel *)command 
            completion:(void (^)(BOOL success, NSDictionary *result, NSError *error))completion {
     NSLog(@"Executing pwd command: %@", [command commandId]);

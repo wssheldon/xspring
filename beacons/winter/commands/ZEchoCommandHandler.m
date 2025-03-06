@@ -6,6 +6,10 @@
     return [super initWithType:@"echo"];
 }
 
+- (NSString *)command {
+    return @"echo";
+}
+
 - (void)executeCommand:(ZCommandModel *)command 
            completion:(void (^)(BOOL success, NSDictionary *result, NSError *error))completion {
     NSLog(@"Executing echo command: %@", [command commandId]);

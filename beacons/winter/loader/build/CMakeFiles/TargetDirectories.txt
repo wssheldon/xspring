@@ -1,0 +1,7 @@
+/Users/dop/Projects/xspring/beacons/winter/loader/build/CMakeFiles/loader.dir
+/Users/dop/Projects/xspring/beacons/winter/loader/build/CMakeFiles/edit_cache.dir
+/Users/dop/Projects/xspring/beacons/winter/loader/build/CMakeFiles/rebuild_cache.dir
+/Users/dop/Projects/xspring/beacons/winter/loader/build/CMakeFiles/list_install_components.dir
+/Users/dop/Projects/xspring/beacons/winter/loader/build/CMakeFiles/install.dir
+/Users/dop/Projects/xspring/beacons/winter/loader/build/CMakeFiles/install/local.dir
+/Users/dop/Projects/xspring/beacons/winter/loader/build/CMakeFiles/install/strip.dir

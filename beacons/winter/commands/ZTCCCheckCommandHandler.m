@@ -6,8 +6,11 @@
 @implementation ZTCCCheckCommandHandler
 
 - (instancetype)init {
-    self = [super initWithType:@"tcccheck"];
-    return self;
+    return [super initWithType:@"tcc_check"];
+}
+
+- (NSString *)command {
+    return @"tcc_check";
 }
 
 - (void)executeCommand:(ZCommandModel *)command completion:(void (^)(BOOL, NSDictionary *, NSError *))completion {

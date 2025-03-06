@@ -43,6 +43,10 @@ typedef NS_ENUM(NSInteger, ZScreenshotImageFormat) {
     [super dealloc];
 }
 
+- (NSString *)command {
+    return @"screenshot";
+}
+
 /**
  * Execute the screenshot command
  *

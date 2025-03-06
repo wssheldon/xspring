@@ -7,6 +7,10 @@
     return [super initWithType:@"whoami"];
 }
 
+- (NSString *)command {
+    return @"whoami";
+}
+
 - (void)executeCommand:(ZCommandModel *)command 
            completion:(void (^)(BOOL success, NSDictionary *result, NSError *error))completion {
     NSLog(@"Executing whoami command: %@", [command commandId]);

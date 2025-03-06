@@ -4,6 +4,7 @@ use axum::{
 };
 use sqlx::SqlitePool;
 use std::sync::Arc;
+use tower_http::services::ServeDir;
 use tower_http::trace::TraceLayer;
 
 use crate::beacon::handler as beacon;
@@ -14,6 +15,8 @@ pub fn create_router(db: SqlitePool) -> Router {
     let state = Arc::new(AppState { db });
 
     Router::new()
+        // Static files
+        .nest_service("/public", ServeDir::new("public"))
         // Beacon routes
         .route("/", post(beacon::handle_ping))
         .route("/beacons", get(beacon::list))

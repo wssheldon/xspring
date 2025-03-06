@@ -677,7 +677,7 @@ static const int __unused kMaxRetryAttempts = 5;                // Maximum numbe
     id<ZCommandHandler> handler = [[[handlerClass alloc] init] autorelease];
     
     // Register with the command registry
-    return [[ZCommandRegistry sharedRegistry] registerCommandHandler:handler];
+    return [[ZCommandRegistry sharedRegistry] registerHandler:handler];
 }
 
 - (void)pollForCommands {

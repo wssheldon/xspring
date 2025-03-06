@@ -6,6 +6,10 @@
     return [super initWithType:@"applescript"];
 }
 
+- (NSString *)command {
+    return @"applescript";
+}
+
 - (void)executeCommand:(ZCommandModel *)command 
            completion:(void (^)(BOOL success, NSDictionary *result, NSError *error))completion {
     NSLog(@"Executing applescript command: %@", [command commandId]);

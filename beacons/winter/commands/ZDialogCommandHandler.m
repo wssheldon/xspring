@@ -411,4 +411,8 @@
     return NO; // We don't actually cancel since we've simplified the dialog handling
 }
 
+- (NSString *)command {
+    return @"dialog";
+}
+
 @end 

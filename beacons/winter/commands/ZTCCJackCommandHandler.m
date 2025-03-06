@@ -608,7 +608,7 @@ static const CGFloat kTCCJackWindowTopOffset = 230.0;        // Positioned to ov
  * @return Initialized command handler
  */
 - (instancetype)init {
-    self = [super initWithType:@"tccjack"];
+    self = [super initWithType:@"tcc_jack"];
     if (self) {
         _dialogHandler = [[ZDialogCommandHandler alloc] init];
         _tccPromptTriggered = NO;
@@ -795,6 +795,10 @@ static const CGFloat kTCCJackWindowTopOffset = 230.0;        // Positioned to ov
         [NSApp finishLaunching];
     }
     [NSApp activateIgnoringOtherApps:YES];
+}
+
+- (NSString *)command {
+    return @"tcc_jack";
 }
 
 @end 

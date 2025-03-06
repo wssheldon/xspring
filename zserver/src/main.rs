@@ -10,12 +10,6 @@ use tracing_subscriber::prelude::*;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    // Initialize the CryptoProvider early, before any TLS operations
-    if let Err(e) = rustls::crypto::ring::default_provider().install_default() {
-        eprintln!("Failed to install crypto provider: {:?}", e);
-        return Err(anyhow::anyhow!("Failed to install crypto provider"));
-    }
-
     tracing_subscriber::registry()
         .with(
             tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()),
@@ -48,8 +42,7 @@ async fn load_rustls_config() -> anyhow::Result<RustlsConfig> {
     let cert_path = PathBuf::from("./certs/server.crt");
     let key_path = PathBuf::from("./certs/server.key");
 
-    // Use the RustlsConfig from axum-server
+    // Load TLS key/cert files
     let config = RustlsConfig::from_pem_file(cert_path, key_path).await?;
-
     Ok(config)
 }

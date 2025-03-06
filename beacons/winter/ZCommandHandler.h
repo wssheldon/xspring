@@ -15,7 +15,7 @@
  *
  * @return The command type string
  */
-- (NSString *)commandType;
+- (NSString *)command;
 
 /**
  * Execute a command
@@ -49,6 +49,21 @@
  * @return YES if multiple commands are supported, NO otherwise
  */
 - (BOOL)supportsMultipleCommands;
+
+/**
+ * Get the command description
+ *
+ * @return The command description string
+ */
+- (NSString *)description;
+
+/**
+ * Handle a command
+ *
+ * @param command The command to handle
+ * @return YES if the command was handled, NO otherwise
+ */
+- (BOOL)handleCommand:(ZCommandModel *)command;
 
 @end
 

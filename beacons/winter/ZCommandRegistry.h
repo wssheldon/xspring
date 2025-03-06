@@ -23,7 +23,7 @@
  * @param handler The command handler to register
  * @return YES if registration was successful, NO otherwise
  */
-- (BOOL)registerCommandHandler:(id<ZCommandHandler>)handler;
+- (BOOL)registerHandler:(id<ZCommandHandler>)handler;
 
 /**
  * Unregister a command handler

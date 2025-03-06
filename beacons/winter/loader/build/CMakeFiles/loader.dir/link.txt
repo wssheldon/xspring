@@ -1,0 +1,2 @@
+/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/ar qc libloader.a CMakeFiles/loader.dir/src/ImageLoader.cpp.o CMakeFiles/loader.dir/src/ImageLoaderMachO.cpp.o CMakeFiles/loader.dir/src/ImageLoaderMachOCompressed.cpp.o CMakeFiles/loader.dir/src/ImageLoaderProxy.cpp.o CMakeFiles/loader.dir/src/custom_dlfcn.cpp.o CMakeFiles/loader.dir/src/dyld_stubs.cpp.o
+/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/ranlib libloader.a
