@@ -34,7 +34,8 @@ impl Plugin for BeaconMapPlugin<'_> {
                 let pos = Position::new(beacon.longitude, beacon.latitude);
                 let screen_pos = projector.project(pos);
                 let marker_pos = Pos2::new(screen_pos.x, screen_pos.y);
-                let marker_rect = Rect::from_center_size(marker_pos, Vec2::splat(10.0));
+                // Make the clickable area match the icon size
+                let marker_rect = Rect::from_center_size(marker_pos, Vec2::splat(28.0));
 
                 MarkerData {
                     pos: marker_pos,
@@ -44,23 +45,72 @@ impl Plugin for BeaconMapPlugin<'_> {
             })
             .collect();
 
-        // Second pass: Draw all markers
-        let painter = ui.painter();
-        for marker in &markers {
-            painter.circle_filled(marker.pos, 5.0, Color32::RED);
-        }
-
-        // Third pass: Handle interactions
+        // Second pass: Handle interactions and draw markers
         let mut clicked_beacon = None;
         let mut right_clicked_beacon = None;
         let mut hovered_beacon = None;
 
+        let font_id = egui::FontId::proportional(21.0); // Previous 64.0 / 3
+        let hover_font_id = egui::FontId::proportional(26.0); // Previous 80.0 / 3
+        let painter = ui.painter();
+
         for marker in &markers {
             let marker_response = ui.allocate_rect(marker.rect, Sense::click());
 
+            // Draw white border icon first
+            for offset in [
+                Vec2::new(-1.0, -1.0),
+                Vec2::new(1.0, -1.0),
+                Vec2::new(-1.0, 1.0),
+                Vec2::new(1.0, 1.0),
+            ] {
+                ui.painter().text(
+                    marker.pos + offset,
+                    egui::Align2::CENTER_CENTER,
+                    regular::DESKTOP,
+                    font_id.clone(),
+                    Color32::WHITE,
+                );
+            }
+
+            // Draw black icon on top
+            ui.painter().text(
+                marker.pos,
+                egui::Align2::CENTER_CENTER,
+                regular::DESKTOP,
+                font_id.clone(),
+                Color32::BLACK,
+            );
+
             if marker_response.hovered() {
                 hovered_beacon = Some(&marker.beacon);
+
+                // Draw hover effect with white border
+                for offset in [
+                    Vec2::new(-1.0, -1.0),
+                    Vec2::new(1.0, -1.0),
+                    Vec2::new(-1.0, 1.0),
+                    Vec2::new(1.0, 1.0),
+                ] {
+                    ui.painter().text(
+                        marker.pos + offset,
+                        egui::Align2::CENTER_CENTER,
+                        regular::DESKTOP,
+                        hover_font_id.clone(),
+                        Color32::WHITE,
+                    );
+                }
+
+                // Draw hover effect in black
+                ui.painter().text(
+                    marker.pos,
+                    egui::Align2::CENTER_CENTER,
+                    regular::DESKTOP,
+                    hover_font_id.clone(),
+                    Color32::BLACK,
+                );
             }
+
             if marker_response.clicked() {
                 clicked_beacon = Some(marker.beacon.id.clone());
             }
@@ -143,7 +193,7 @@ impl GuiClient {
                 // Add title
                 ui.vertical(|ui| {
                     ui.add_space(10.0);
-                    ui.heading(RichText::new(format!("{} Dashboard", regular::CHART_LINE)));
+                    ui.heading(RichText::new(format!("{} Dashboard", regular::COMPASS)));
                     ui.add_space(10.0);
                     ui.separator();
                     ui.add_space(10.0);
@@ -170,15 +220,47 @@ impl GuiClient {
                     let map_tiles = self.map_tiles.as_mut().unwrap();
                     let map_memory = self.map_memory.as_mut().unwrap();
 
+                    // Calculate minimum zoom level based on viewport size
+                    let available_rect = ui.available_rect_before_wrap();
+                    let viewport_width = available_rect.width() as f64;
+                    let viewport_height = available_rect.height() as f64;
+
+                    // Calculate the zoom level needed to show the entire world
+                    // The world is approximately 360° wide and 180° tall
+                    // We add a small offset to ensure the map fills the viewport
+                    let width_zoom = (viewport_width / 360.0).log2() + 1.0;
+                    let height_zoom = (viewport_height / 180.0).log2() + 1.0;
+
+                    // Use the larger zoom level to ensure the map fills both dimensions
+                    let min_zoom = width_zoom.max(height_zoom);
+
+                    // Enforce minimum zoom level
+                    let current_zoom = map_memory.zoom();
+                    if current_zoom < min_zoom {
+                        let _ = map_memory.set_zoom(min_zoom);
+                    }
+
                     // Add the map widget with plugin
-                    ui.add(
-                        Map::new(
-                            Some(map_tiles),
-                            map_memory,
-                            Position::new(-122.4194, 37.7749), // San Francisco coordinates
-                        )
-                        .with_plugin(plugin),
-                    );
+                    let map = Map::new(
+                        Some(map_tiles),
+                        map_memory,
+                        Position::new(-122.4194, 37.7749), // San Francisco coordinates
+                    )
+                    .with_plugin(plugin);
+
+                    let response = ui.add(map);
+
+                    // If the map was dragged, ensure it stays within bounds
+                    if response.dragged() || response.dragged_by(egui::PointerButton::Middle) {
+                        let detached = map_memory.detached();
+                        if let Some(pos) = detached {
+                            let lon = pos.x().clamp(-180.0, 180.0);
+                            let lat = pos.y().clamp(-90.0, 90.0);
+                            if lon != pos.x() || lat != pos.y() {
+                                map_memory.center_at(Position::new(lon, lat));
+                            }
+                        }
+                    }
 
                     // Check if we need to switch to beacons view
                     if ui.ctx().data_mut(|data| {

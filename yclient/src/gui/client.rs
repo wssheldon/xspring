@@ -229,20 +229,24 @@ impl GuiClient {
     /// Render a navigation button
     pub fn render_nav_button(&mut self, ui: &mut egui::Ui, icon: &str, view: View, tooltip: &str) {
         let is_selected = self.current_view == view;
-
-        let icon_text = egui::RichText::new(icon).size(24.0).color(if is_selected {
-            egui::Color32::WHITE
-        } else {
-            egui::Color32::from_gray(160) // Light gray for unselected icons
-        });
-
-        let response = ui.add(egui::Label::new(icon_text).sense(egui::Sense::click()));
+        let response = ui
+            .add(
+                egui::Button::new(
+                    egui::RichText::new(icon)
+                        .size(18.0) // 75% of the default 24.0 size
+                        .color(if is_selected {
+                            egui::Color32::WHITE
+                        } else {
+                            egui::Color32::from_gray(180)
+                        }),
+                )
+                .frame(false),
+            )
+            .on_hover_text(tooltip);
 
         if response.clicked() {
             self.current_view = view;
         }
-
-        response.on_hover_text(tooltip);
     }
 
     /// Send a command to a beacon
@@ -632,7 +636,7 @@ impl eframe::App for GuiClient {
             .show(ctx, |ui| {
                 ui.vertical_centered(|ui| {
                     ui.add_space(10.0);
-                    self.render_nav_button(ui, regular::CHART_LINE, View::Dashboard, "Dashboard");
+                    self.render_nav_button(ui, regular::COMPASS, View::Dashboard, "Dashboard");
                     ui.add_space(8.0);
                     self.render_nav_button(ui, regular::DESKTOP_TOWER, View::Beacons, "Beacons");
                     ui.add_space(8.0);

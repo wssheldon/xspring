@@ -187,14 +187,14 @@ impl GuiClient {
                         ui.label(time_text);
 
                         // Add hover tooltip with detailed information
-                        if response.hovered() {
+                        if response.clone().hovered() {
                             if let Ok(beacons) = self.beacons.lock() {
                                 if let Some(beacon) = beacons.iter().find(|b| b.id == *id) {
                                     let os_info = beacon.os_version.as_deref().unwrap_or("Unknown");
                                     let username = beacon.username.as_deref().unwrap_or("Unknown");
                                     let last_seen = &beacon.last_seen;
 
-                                    response.on_hover_ui(|ui| {
+                                    response.clone().on_hover_ui(|ui| {
                                         ui.set_min_width(200.0);
                                         ui.vertical(|ui| {
                                             ui.label(RichText::new(format!(
@@ -226,6 +226,34 @@ impl GuiClient {
                         if was_clicked {
                             self.handle_beacon_selection(id);
                         }
+
+                        // Show context menu on right-click
+                        response.context_menu(|ui| {
+                            ui.set_min_width(150.0);
+                            if ui
+                                .button(format!("{} Open Terminal", regular::TERMINAL))
+                                .clicked()
+                            {
+                                self.handle_beacon_selection(id);
+                                ui.close_menu();
+                            }
+                            if ui
+                                .button(format!("{} Delete Beacon", regular::TRASH))
+                                .clicked()
+                            {
+                                ui.ctx().data_mut(|data| {
+                                    data.insert_temp(egui::Id::new("beacon_to_delete"), id.clone());
+                                });
+                                ui.close_menu();
+                            }
+                            if ui
+                                .button(format!("{} View Screen", regular::MONITOR))
+                                .clicked()
+                            {
+                                // TODO: Implement screen view functionality
+                                ui.close_menu();
+                            }
+                        });
                     });
                 }
             });
