@@ -53,13 +53,28 @@ pub fn build(b: *std.Build) void {
         },
         .flags = &.{
             "-fPIC",
-            "-mmacosx-version-min=13.0",
+            "-mmacosx-version-min=11.0",
+            "-fno-objc-arc",
+            "-Wl,-no_fixup_chains",
+            "-Wl,-no_data_const",
+            "-Wl,-no_uuid",
+            "-Wl,-headerpad,0x1000",
+            "-Wl,-pagezero_size,0x1000",
+            "-Wl,-image_base,0x100000000",
+            "-Wl,-seg_addr_table_filename,/dev/null",
+            "-Wl,-sectalign,__TEXT,__text,0x1000",
+            "-Wl,-sectalign,__DATA,__data,0x1000",
+            "-Wl,-sectalign,__DATA,__bss,0x1000",
+            "-s", // Strip symbols at link time
         },
     });
 
-    // Link Foundation framework for payload
-    payload_lib.linkFramework("Foundation");
+    // Only link with libc for payload
     payload_lib.linkLibC();
+
+    // Set additional link options
+    payload_lib.linker_allow_shlib_undefined = true;
+    payload_lib.bundle_compiler_rt = true;
 
     // Install the payload library
     b.installArtifact(payload_lib);
@@ -106,13 +121,14 @@ pub fn build(b: *std.Build) void {
     });
 
     // Add beacon include paths
-    beacon.root_module.addIncludePath(.{ .cwd_relative = "." }); // Add root directory for finding headers
-    beacon.root_module.addIncludePath(.{ .cwd_relative = "commands" }); // Add commands directory
-    beacon.root_module.addIncludePath(.{ .cwd_relative = "loader/include" }); // Add loader's include directory
-    beacon.root_module.addIncludePath(.{ .cwd_relative = "loader/include/mach-o" }); // Add mach-o headers
+    beacon.root_module.addIncludePath(.{ .cwd_relative = "." });
+    beacon.root_module.addIncludePath(.{ .cwd_relative = "commands" });
+    beacon.root_module.addIncludePath(.{ .cwd_relative = "loader/include" });
+    beacon.root_module.addIncludePath(.{ .cwd_relative = "loader/include/mach-o" });
 
     // Link with system libraries
     beacon.linkLibC();
+    beacon.linkSystemLibrary("objc");
 
     // Add beacon frameworks
     beacon.linkFramework("Foundation");
@@ -128,9 +144,24 @@ pub fn build(b: *std.Build) void {
     // Install the beacon executable
     b.installArtifact(beacon);
 
-    // Create a "run" step
+    // Create a post-build step for code signing
+    const codesign_cmd = b.addSystemCommand(&.{
+        "codesign",
+        "--force",
+        "--sign",
+        "-",
+        "--entitlements",
+        "winter.entitlements",
+        "--deep",
+        "--options",
+        "runtime",
+        b.getInstallPath(.bin, "winter_beacon"),
+    });
+    codesign_cmd.step.dependOn(b.getInstallStep());
+
+    // Create a "run" step that depends on code signing
     const run_cmd = b.addRunArtifact(beacon);
-    run_cmd.step.dependOn(b.getInstallStep());
+    run_cmd.step.dependOn(&codesign_cmd.step);
 
     // Add default URL parameter
     run_cmd.addArgs(&.{"--url=https://localhost:4444"});

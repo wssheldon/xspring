@@ -12,21 +12,19 @@ impl GuiClient {
 
         // Create a frame that takes up the full available space
         egui::Frame::none()
-            .fill(ui.style().visuals.window_fill)
+            .fill(egui::Color32::from_rgb(20, 20, 20))
             .show(ui, |ui| {
                 // Split the view into left (tree) and right (terminal) panels using Layout
                 ui.horizontal(|ui| {
                     // Left panel - Tree view of beacons (fixed width)
-                    egui::Frame::none()
-                        .fill(ui.style().visuals.extreme_bg_color)
-                        .show(ui, |ui| {
-                            ui.set_min_size(Vec2::new(250.0, available_size.y));
-                            egui::ScrollArea::vertical()
-                                .id_salt("beacons_tree")
-                                .show(ui, |ui| {
-                                    self.render_beacons_tree(ui);
-                                });
-                        });
+                    egui::Frame::none().show(ui, |ui| {
+                        ui.set_min_size(Vec2::new(250.0, available_size.y));
+                        egui::ScrollArea::vertical()
+                            .id_salt("beacons_tree")
+                            .show(ui, |ui| {
+                                self.render_beacons_tree(ui);
+                            });
+                    });
 
                     // Add a separator
                     ui.separator();
@@ -134,7 +132,47 @@ impl GuiClient {
                         },
                     );
 
-                    if ui.selectable_label(is_selected, text).clicked() {
+                    let response = ui.selectable_label(is_selected, text);
+                    let was_clicked = response.clicked();
+
+                    // Add hover tooltip with detailed information
+                    if response.hovered() {
+                        if let Ok(beacons) = self.beacons.lock() {
+                            if let Some(beacon) = beacons.iter().find(|b| b.id == *id) {
+                                let os_info = beacon.os_version.as_deref().unwrap_or("Unknown");
+                                let username = beacon.username.as_deref().unwrap_or("Unknown");
+                                let last_seen = &beacon.last_seen;
+
+                                response.on_hover_ui(|ui| {
+                                    ui.set_min_width(200.0);
+                                    ui.vertical(|ui| {
+                                        ui.label(RichText::new(format!(
+                                            "{} ID: {}",
+                                            regular::IDENTIFICATION_BADGE,
+                                            id
+                                        )));
+                                        ui.label(RichText::new(format!(
+                                            "{} OS: {}",
+                                            regular::GEAR,
+                                            os_info
+                                        )));
+                                        ui.label(RichText::new(format!(
+                                            "{} User: {}",
+                                            regular::USER,
+                                            username
+                                        )));
+                                        ui.label(RichText::new(format!(
+                                            "{} Last Seen: {}",
+                                            regular::CLOCK,
+                                            last_seen
+                                        )));
+                                    });
+                                });
+                            }
+                        }
+                    }
+
+                    if was_clicked {
                         self.handle_beacon_selection(id);
                     }
                 }

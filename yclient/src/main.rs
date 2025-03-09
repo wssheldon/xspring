@@ -49,10 +49,10 @@ fn main() -> Result<(), eframe::Error> {
         });
         Ok(())
     } else {
-        // Run in GUI mode (default)
+        // Run GUI mode
         let options = eframe::NativeOptions {
             viewport: egui::ViewportBuilder::default()
-                .with_inner_size([1280.0, 720.0])
+                .with_inner_size([1920.0, 1080.0]) // Default 960x540 * 2
                 .with_min_inner_size([800.0, 600.0])
                 .with_decorations(true)
                 .with_transparent(true)
@@ -67,7 +67,6 @@ fn main() -> Result<(), eframe::Error> {
             ..Default::default()
         };
 
-        // Start the GUI application
         eframe::run_native(
             "🌸💐",
             options,

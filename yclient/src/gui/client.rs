@@ -140,7 +140,7 @@ impl GuiClient {
             .exact_height(ui.available_height())
             .frame(
                 egui::Frame::none()
-                    .fill(egui::Color32::BLACK)
+                    .fill(ui.style().visuals.extreme_bg_color)
                     .inner_margin(0.0)
                     .outer_margin(0.0),
             )
@@ -224,9 +224,9 @@ impl GuiClient {
         let is_selected = self.current_view == view;
 
         let icon_text = egui::RichText::new(icon).size(24.0).color(if is_selected {
-            ui.visuals().selection.stroke.color
+            egui::Color32::WHITE
         } else {
-            ui.visuals().text_color()
+            egui::Color32::from_gray(160) // Light gray for unselected icons
         });
 
         let response = ui.add(egui::Label::new(icon_text).sense(egui::Sense::click()));
