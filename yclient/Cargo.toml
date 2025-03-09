@@ -23,6 +23,8 @@ image = "0.25.5"
 chrono = "0.4"
 tracing = "0.1"
 tokio = { version = "1.36", features = ["full"] }
+walkers = "0.35.0"
+geo-types = "0.7.15"
 
 [dev-dependencies]
 mockito = "1.6.1"

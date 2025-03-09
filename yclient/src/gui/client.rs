@@ -15,6 +15,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 use std::time::Instant;
+use walkers::{sources::OpenStreetMap, HttpTiles, Map, MapMemory};
 
 impl AsMut<DockState<Tab>> for GuiClient {
     fn as_mut(&mut self) -> &mut DockState<Tab> {
@@ -53,6 +54,10 @@ pub struct GuiClient {
 
     // Store captured screenshots
     pub screenshots: Vec<(String, String, String)>, // (beacon_id, timestamp, base64_data)
+
+    // Update map state
+    pub map_memory: Option<MapMemory>,
+    pub map_tiles: Option<HttpTiles>,
 }
 
 impl GuiClient {
@@ -85,6 +90,8 @@ impl GuiClient {
             processed_command_ids: HashSet::new(),
             egui_ctx: Some(cc.egui_ctx.clone()),
             screenshots: Vec::new(),
+            map_memory: None,
+            map_tiles: None,
         };
 
         // Start beacon polling thread

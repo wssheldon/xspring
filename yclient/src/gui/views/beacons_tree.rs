@@ -124,57 +124,109 @@ impl GuiClient {
                         .iter()
                         .any(|s| s.is_selected && s.beacon_id == *id);
 
-                    let text = RichText::new(format!("{} {}", regular::DESKTOP, hostname)).color(
-                        if is_selected {
-                            ui.style().visuals.selection.stroke.color
+                    // Get the last seen time for this beacon
+                    let (last_seen_time, relative_time) = if let Ok(beacons) = self.beacons.lock() {
+                        if let Some(beacon) = beacons.iter().find(|b| b.id == *id) {
+                            // Parse the last_seen timestamp
+                            if let Ok(timestamp) =
+                                chrono::DateTime::parse_from_rfc3339(&beacon.last_seen)
+                            {
+                                let now = chrono::Local::now();
+                                let duration = now.signed_duration_since(timestamp);
+
+                                // Format relative time
+                                let relative = if duration.num_seconds() < 60 {
+                                    "just now".to_string()
+                                } else if duration.num_minutes() < 60 {
+                                    format!("{}m ago", duration.num_minutes())
+                                } else if duration.num_hours() < 24 {
+                                    format!("{}h ago", duration.num_hours())
+                                } else {
+                                    format!("{}d ago", duration.num_days())
+                                };
+
+                                // Format last seen time as HH:MM
+                                let time_str = timestamp.format("%H:%M").to_string();
+                                (time_str, relative)
+                            } else {
+                                ("??:??".to_string(), "unknown".to_string())
+                            }
                         } else {
-                            ui.style().visuals.text_color()
-                        },
-                    );
+                            ("??:??".to_string(), "unknown".to_string())
+                        }
+                    } else {
+                        ("??:??".to_string(), "unknown".to_string())
+                    };
 
-                    let response = ui.selectable_label(is_selected, text);
-                    let was_clicked = response.clicked();
+                    ui.horizontal(|ui| {
+                        let beacon_text =
+                            RichText::new(format!("{} {}", regular::DESKTOP, hostname)).color(
+                                if is_selected {
+                                    ui.style().visuals.selection.stroke.color
+                                } else {
+                                    ui.style().visuals.text_color()
+                                },
+                            );
 
-                    // Add hover tooltip with detailed information
-                    if response.hovered() {
-                        if let Ok(beacons) = self.beacons.lock() {
-                            if let Some(beacon) = beacons.iter().find(|b| b.id == *id) {
-                                let os_info = beacon.os_version.as_deref().unwrap_or("Unknown");
-                                let username = beacon.username.as_deref().unwrap_or("Unknown");
-                                let last_seen = &beacon.last_seen;
-
-                                response.on_hover_ui(|ui| {
-                                    ui.set_min_width(200.0);
-                                    ui.vertical(|ui| {
-                                        ui.label(RichText::new(format!(
-                                            "{} ID: {}",
-                                            regular::IDENTIFICATION_BADGE,
-                                            id
-                                        )));
-                                        ui.label(RichText::new(format!(
-                                            "{} OS: {}",
-                                            regular::GEAR,
-                                            os_info
-                                        )));
-                                        ui.label(RichText::new(format!(
-                                            "{} User: {}",
-                                            regular::USER,
-                                            username
-                                        )));
-                                        ui.label(RichText::new(format!(
-                                            "{} Last Seen: {}",
-                                            regular::CLOCK,
-                                            last_seen
-                                        )));
-                                    });
+                        let time_text =
+                            RichText::new(format!(" ({} - {})", last_seen_time, relative_time))
+                                .weak()
+                                .color(if is_selected {
+                                    ui.style()
+                                        .visuals
+                                        .selection
+                                        .stroke
+                                        .color
+                                        .gamma_multiply(0.7)
+                                } else {
+                                    ui.style().visuals.text_color().gamma_multiply(0.7)
                                 });
+
+                        let response = ui.selectable_label(is_selected, beacon_text);
+                        let was_clicked = response.clicked();
+                        ui.label(time_text);
+
+                        // Add hover tooltip with detailed information
+                        if response.hovered() {
+                            if let Ok(beacons) = self.beacons.lock() {
+                                if let Some(beacon) = beacons.iter().find(|b| b.id == *id) {
+                                    let os_info = beacon.os_version.as_deref().unwrap_or("Unknown");
+                                    let username = beacon.username.as_deref().unwrap_or("Unknown");
+                                    let last_seen = &beacon.last_seen;
+
+                                    response.on_hover_ui(|ui| {
+                                        ui.set_min_width(200.0);
+                                        ui.vertical(|ui| {
+                                            ui.label(RichText::new(format!(
+                                                "{} ID: {}",
+                                                regular::IDENTIFICATION_BADGE,
+                                                id
+                                            )));
+                                            ui.label(RichText::new(format!(
+                                                "{} OS: {}",
+                                                regular::GEAR,
+                                                os_info
+                                            )));
+                                            ui.label(RichText::new(format!(
+                                                "{} User: {}",
+                                                regular::USER,
+                                                username
+                                            )));
+                                            ui.label(RichText::new(format!(
+                                                "{} Last Seen: {}",
+                                                regular::CLOCK,
+                                                last_seen
+                                            )));
+                                        });
+                                    });
+                                }
                             }
                         }
-                    }
 
-                    if was_clicked {
-                        self.handle_beacon_selection(id);
-                    }
+                        if was_clicked {
+                            self.handle_beacon_selection(id);
+                        }
+                    });
                 }
             });
     }
