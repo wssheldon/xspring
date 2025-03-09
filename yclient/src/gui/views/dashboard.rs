@@ -3,7 +3,7 @@ use egui::{Color32, Pos2, Rect, Response, RichText, Sense, Stroke, Ui, Vec2};
 use walkers::{sources::OpenStreetMap, HttpTiles, Map, MapMemory, Plugin, Position, Projector};
 
 use crate::gui::client::GuiClient;
-use crate::models::Beacon;
+use crate::models::{Beacon, Tab, View};
 use egui_phosphor::regular;
 
 /// Plugin for displaying beacons on the map
@@ -17,48 +17,119 @@ impl<'a> BeaconMapPlugin<'a> {
     }
 }
 
+// Helper struct to store marker data
+struct MarkerData {
+    pos: Pos2,
+    rect: Rect,
+    beacon: Beacon,
+}
+
 impl Plugin for BeaconMapPlugin<'_> {
     fn run(self: Box<Self>, ui: &mut Ui, response: &Response, projector: &Projector) {
+        // First pass: Collect all marker data
+        let markers: Vec<MarkerData> = self
+            .beacons
+            .iter()
+            .map(|beacon| {
+                let pos = Position::new(beacon.longitude, beacon.latitude);
+                let screen_pos = projector.project(pos);
+                let marker_pos = Pos2::new(screen_pos.x, screen_pos.y);
+                let marker_rect = Rect::from_center_size(marker_pos, Vec2::splat(10.0));
+
+                MarkerData {
+                    pos: marker_pos,
+                    rect: marker_rect,
+                    beacon: beacon.clone(),
+                }
+            })
+            .collect();
+
+        // Second pass: Draw all markers
         let painter = ui.painter();
+        for marker in &markers {
+            painter.circle_filled(marker.pos, 5.0, Color32::RED);
+        }
 
-        for beacon in self.beacons {
-            let pos = Position::new(beacon.longitude, beacon.latitude);
-            let screen_pos = projector.project(pos);
+        // Third pass: Handle interactions
+        let mut clicked_beacon = None;
+        let mut right_clicked_beacon = None;
+        let mut hovered_beacon = None;
 
-            // Draw beacon marker
-            let marker_radius = 5.0;
-            let marker_pos = Pos2::new(screen_pos.x, screen_pos.y);
+        for marker in &markers {
+            let marker_response = ui.allocate_rect(marker.rect, Sense::click());
 
-            // Draw a red circle for the beacon
-            painter.circle_filled(marker_pos, marker_radius, Color32::RED);
-
-            // Add hover detection and tooltip
-            let marker_rect = Rect::from_center_size(marker_pos, Vec2::splat(marker_radius * 2.0));
-
-            if response.rect.contains(marker_pos) && ui.rect_contains_pointer(marker_rect) {
-                egui::show_tooltip(
-                    ui.ctx(),
-                    response.layer_id,
-                    response.id.with("beacon_tooltip"),
-                    |ui| {
-                        ui.label(format!("ID: {}", beacon.id));
-                        ui.label(format!("Status: {}", beacon.status));
-                        ui.label(format!("Last Seen: {}", beacon.last_seen));
-                        ui.label(format!(
-                            "Hostname: {}",
-                            beacon.hostname.as_deref().unwrap_or("Unknown")
-                        ));
-                        ui.label(format!(
-                            "Username: {}",
-                            beacon.username.as_deref().unwrap_or("Unknown")
-                        ));
-                        ui.label(format!(
-                            "OS: {}",
-                            beacon.os_version.as_deref().unwrap_or("Unknown")
-                        ));
-                    },
-                );
+            if marker_response.hovered() {
+                hovered_beacon = Some(&marker.beacon);
             }
+            if marker_response.clicked() {
+                clicked_beacon = Some(marker.beacon.id.clone());
+            }
+            if marker_response.secondary_clicked() {
+                right_clicked_beacon = Some(marker.beacon.id.clone());
+            }
+        }
+
+        // Handle hover tooltip
+        if let Some(beacon) = hovered_beacon {
+            egui::show_tooltip(
+                ui.ctx(),
+                response.layer_id,
+                response.id.with("beacon_tooltip"),
+                |ui| {
+                    ui.label(format!("ID: {}", beacon.id));
+                    ui.label(format!("Status: {}", beacon.status));
+                    ui.label(format!("Last Seen: {}", beacon.last_seen));
+                    ui.label(format!(
+                        "Hostname: {}",
+                        beacon.hostname.as_deref().unwrap_or("Unknown")
+                    ));
+                    ui.label(format!(
+                        "Username: {}",
+                        beacon.username.as_deref().unwrap_or("Unknown")
+                    ));
+                    ui.label(format!(
+                        "OS: {}",
+                        beacon.os_version.as_deref().unwrap_or("Unknown")
+                    ));
+                },
+            );
+        }
+
+        // Handle clicks
+        if let Some(beacon_id) = clicked_beacon {
+            ui.ctx().data_mut(|data| {
+                data.insert_temp(egui::Id::new("selected_beacon"), beacon_id);
+            });
+        }
+
+        if let Some(beacon_id) = right_clicked_beacon {
+            ui.ctx().data_mut(|data| {
+                data.insert_temp(egui::Id::new("beacon_context_menu"), beacon_id);
+            });
+        }
+
+        // Handle context menu
+        if let Some(beacon_id) = ui
+            .ctx()
+            .data_mut(|data| data.get_temp::<String>(egui::Id::new("beacon_context_menu")))
+        {
+            egui::Window::new("Beacon Actions")
+                .fixed_size([150.0, 100.0])
+                .anchor(egui::Align2::RIGHT_TOP, [10.0, 10.0])
+                .show(ui.ctx(), |ui| {
+                    if ui.button("Open Terminal").clicked() {
+                        ui.ctx().data_mut(|data| {
+                            data.insert_temp(egui::Id::new("selected_beacon"), beacon_id.clone());
+                            data.remove::<String>(egui::Id::new("beacon_context_menu"));
+                        });
+                    }
+                    if ui.button("Delete Beacon").clicked() {
+                        ui.ctx().data_mut(|data| {
+                            data.insert_temp(egui::Id::new("beacon_to_delete"), beacon_id.clone());
+                            data.remove::<String>(egui::Id::new("beacon_context_menu"));
+                        });
+                    }
+                });
         }
     }
 }
@@ -108,6 +179,14 @@ impl GuiClient {
                         )
                         .with_plugin(plugin),
                     );
+
+                    // Check if we need to switch to beacons view
+                    if ui.ctx().data_mut(|data| {
+                        data.get_temp::<String>(egui::Id::new("selected_beacon"))
+                            .is_some()
+                    }) {
+                        self.current_view = View::Beacons;
+                    }
                 });
             });
     }
